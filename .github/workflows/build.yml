@@ -1,0 +1,57 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & SQLLogicTest (linux x64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
+          cmake --version
+          ninja --version
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-duckdb-2.0.0
+
+      - name: Build extension
+        env:
+          CC: gcc
+          CXX: g++
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        run: |
+          GEN=ninja make release
+
+      - name: Run extension SQLLogicTests
+        run: |
+          ./build/release/test/unittest "test/sql/*"
+
+      - name: Smoke test the loadable extension
+        run: |
+          ./build/release/duckdb -unsigned -c \
+            "LOAD 'build/release/extension/hbase/hbase.duckdb_extension'; SELECT hbase_version();"
+
+      - name: C++ formatting check
+        run: |
+          pip install clang-format
+          git ls-files 'src/*.cpp' 'src/*.hpp' | xargs clang-format --dry-run --Werror
