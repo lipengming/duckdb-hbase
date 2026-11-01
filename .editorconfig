@@ -1,0 +1,36 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{md,markdown}]
+trim_trailing_whitespace = false
+indent_size = 2
+
+[*.{yml,yaml,json,jsonc}]
+indent_size = 2
+
+[*.{xml,proto}]
+indent_size = 2
+
+[*.{sh,bash}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[*.java]
+indent_size = 4
+max_line_length = 120
+
+[*.{cpp,cc,cxx,h,hpp}]
+indent_size = 4
+max_line_length = 100
+
+[*.{sql,pom}]
+indent_size = 2

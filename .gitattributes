@@ -1,0 +1,33 @@
+# 统一换行符：仓库内使用 LF
+* text=auto eol=lf
+
+# 明确的文本类型
+*.md            text
+*.txt           text
+*.sh            text eol=lf
+*.cmake         text
+CMakeLists.txt  text
+*.cpp           text
+*.cc            text
+*.hpp           text
+*.h             text
+*.proto         text
+*.java          text
+*.xml           text
+*.yml           text
+*.yaml          text
+*.sql           text
+*.json          text
+
+# 二进制
+*.png           binary
+*.jpg           binary
+*.gif           binary
+*.pdf           binary
+*.jar           binary
+*.duckdb_extension binary
+*.parquet       binary
+
+# 语言统计与 diff 优化
+*.md            linguist-documentation
+tech_v0.1.md    linguist-documentation
