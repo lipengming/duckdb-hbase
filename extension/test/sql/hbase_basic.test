@@ -1,5 +1,5 @@
 # name: test/sql/hbase_basic.test
-# description: hbase 扩展注册、连接表与参数校验
+# description: hbase 扩展注册、参数校验与错误路径（不依赖 Gateway 运行）
 # group: [sql]
 
 require hbase
@@ -10,53 +10,32 @@ SELECT length(hbase_version()) > 0;
 ----
 true
 
-# 注册连接
-statement ok
-SELECT hbase_connect('prod', 'grpc://127.0.0.1:18080');
-
-# 重复注册同名连接是幂等覆盖
-query I
-SELECT hbase_connect('prod', 'grpc://127.0.0.1:18080');
-----
-true
-
 # 未注册连接直接扫描：报错且提示如何注册
 statement error
 SELECT * FROM hbase_scan('missing', 'default', 't');
 ----
 未注册
 
-# 非法的列描述
-statement error
-SELECT * FROM hbase_scan('prod', 'default', 't', columns := ['cf1']);
-----
-非法
-
-# max_versions 必须 >= 1
-statement error
-SELECT * FROM hbase_scan('prod', 'default', 't', max_versions := 0);
-----
-max_versions
-
-# endpoint 缺少端口
+# endpoint 缺少端口（解析阶段失败，不发起网络请求）
 statement error
 SELECT hbase_connect('bad', 'grpc://127.0.0.1');
 ----
 端口
 
-# 不支持的 scheme
+# 不支持的 scheme（解析阶段失败）
 statement error
 SELECT hbase_connect('bad', 'ftp://127.0.0.1:21');
 ----
 scheme
 
-# 断开连接：第一次 true，第二次 false
+# 端点为 NULL：沿用 DuckDB 默认 NULL 传播语义，函数不被调用，结果为 NULL
 query I
-SELECT hbase_disconnect('prod');
+SELECT hbase_connect(NULL, 'grpc://127.0.0.1:18080') IS NULL;
 ----
 true
 
+# 断开一个从未注册的连接：返回 false
 query I
-SELECT hbase_disconnect('prod');
+SELECT hbase_disconnect('nope');
 ----
 false

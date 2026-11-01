@@ -5,6 +5,7 @@
 #include "duckdb/execution/expression_executor_state.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "provider/provider_factory.hpp"
 
 namespace duckdb {
 namespace hbase {
@@ -30,7 +31,19 @@ void HbaseConnectFunction(DataChunk& args, ExpressionState& state, Vector& resul
         }
 
         auto config = ParseEndpoint(name, endpoint);
-        registry.Upsert(std::move(config));
+
+        // 建连即握手：Health + GetCapabilities，失败则不注册连接（见 docs/extension-design.md §7）
+        auto provider = CreateProvider(config);
+        if (!provider->HealthCheck()) {
+            provider->Close();
+            throw IOException("hbase_connect: Gateway 不可用 (%s)，请确认服务已启动", endpoint);
+        }
+        provider->GetCapabilities();
+
+        ConnectionEntry entry;
+        entry.config = config;
+        entry.provider = std::shared_ptr<IRemoteScanProvider>(std::move(provider));
+        registry.Upsert(std::move(entry));
         result.SetValue(i, Value::BOOLEAN(true));
     }
 }

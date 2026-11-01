@@ -2,17 +2,17 @@
 
 #include "duckdb.hpp"
 #include "duckdb/main/client_context_state.hpp"
+#include "provider/remote_scan_provider.hpp"
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <mutex>
 
 namespace duckdb {
 namespace hbase {
 
-//! 一条已注册连接的静态配置。
-//! 注意：这里只保存连接参数，不持有任何网络资源；
-//! 真正的 Gateway 客户端由 Provider 在需要时创建（见 docs/gateway-design.md）。
+//! 一条已注册连接的配置。连接建立时完成握手，Provider 句柄随连接保存。
 struct ConnectionConfig {
     //! 连接名，SQL 中的首参
     string name;
@@ -24,24 +24,32 @@ struct ConnectionConfig {
     string host;
     //! 端口
     uint16_t port = 0;
+    //! 单次 RPC 超时（毫秒）
+    int timeout_ms = 30000;
+};
+
+//! 连接表条目：配置 + 已完成握手的 Provider。
+struct ConnectionEntry {
+    ConnectionConfig config;
+    std::shared_ptr<IRemoteScanProvider> provider;
 };
 
 //! 连接表：生命周期绑定到 ClientContext（DuckDB 连接），随会话销毁自动释放。
-//! 所有方法线程安全。实现见 docs/extension-design.md §2。
+//! 所有方法线程安全。设计见 docs/extension-design.md §7。
 class ConnectionRegistry : public ClientContextState {
 public:
     //! 注册或覆盖同名连接；返回 true 表示覆盖了已存在的连接。
-    bool Upsert(ConnectionConfig config);
-    //! 删除连接；返回是否删除成功。
+    bool Upsert(ConnectionEntry entry);
+    //! 删除连接（同时关闭 Provider）；返回是否删除成功。
     bool Remove(const string& name);
     //! 查询连接；存在时写入 out 并返回 true。
-    bool TryGet(const string& name, ConnectionConfig& out) const;
+    bool TryGet(const string& name, ConnectionEntry& out) const;
     //! 当前连接数量。
     idx_t Count() const;
 
 private:
     mutable mutex lock_;
-    std::map<string, ConnectionConfig> connections_;
+    std::map<string, ConnectionEntry> connections_;
 };
 
 //! 取得（必要时创建）当前会话的连接表。

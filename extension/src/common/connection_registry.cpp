@@ -78,19 +78,35 @@ ConnectionConfig ParseEndpoint(const string& connection_name, const string& endp
     return config;
 }
 
-bool ConnectionRegistry::Upsert(ConnectionConfig config) {
+bool ConnectionRegistry::Upsert(ConnectionEntry entry) {
     lock_guard<mutex> guard(lock_);
-    auto name = config.name;
-    auto inserted = connections_.insert_or_assign(std::move(name), std::move(config));
+    auto name = entry.config.name;
+    auto inserted = connections_.insert_or_assign(std::move(name), std::move(entry));
+    if (!inserted.second && inserted.first->second.provider) {
+        // 覆盖同名连接时关闭旧 Provider，避免连接泄漏
+        inserted.first->second.provider->Close();
+    }
     return !inserted.second;
 }
 
 bool ConnectionRegistry::Remove(const string& name) {
-    lock_guard<mutex> guard(lock_);
-    return connections_.erase(name) > 0;
+    std::shared_ptr<IRemoteScanProvider> provider;
+    {
+        lock_guard<mutex> guard(lock_);
+        auto entry = connections_.find(name);
+        if (entry == connections_.end()) {
+            return false;
+        }
+        provider = entry->second.provider;
+        connections_.erase(entry);
+    }
+    if (provider) {
+        provider->Close();
+    }
+    return true;
 }
 
-bool ConnectionRegistry::TryGet(const string& name, ConnectionConfig& out) const {
+bool ConnectionRegistry::TryGet(const string& name, ConnectionEntry& out) const {
     lock_guard<mutex> guard(lock_);
     auto entry = connections_.find(name);
     if (entry == connections_.end()) {

@@ -3,18 +3,20 @@
 #include "common/connection_registry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/function/table_function.hpp"
+#include "provider/remote_scan_provider.hpp"
 
 namespace duckdb {
 namespace hbase {
 
 namespace {
 
-//! Bind 阶段解析出的扫描参数（不包含远端 schema）。
+//! Bind 阶段解析出的扫描参数与已解析的列集合。
 struct HbaseScanBindData : public TableFunctionData {
     ConnectionConfig connection;
+    std::shared_ptr<IRemoteScanProvider> provider;
     string namespace_name;
     string table_name;
-    vector<string> columns;
+    vector<RemoteColumn> columns;
     Value start_row;
     Value stop_row;
     int32_t max_versions = 1;
@@ -22,6 +24,27 @@ struct HbaseScanBindData : public TableFunctionData {
     Value timestamp_max;
     bool use_cache = true;
 };
+
+//! 把 Provider 返回的逻辑类型名映射为 DuckDB LogicalType；未知类型退化为 VARCHAR。
+LogicalType MapSqlType(const string& sql_type) {
+    auto upper = StringUtil::Upper(sql_type);
+    if (upper == "BIGINT") {
+        return LogicalType::BIGINT;
+    }
+    if (upper == "INTEGER" || upper == "INT") {
+        return LogicalType::INTEGER;
+    }
+    if (upper == "DOUBLE") {
+        return LogicalType::DOUBLE;
+    }
+    if (upper == "BOOLEAN") {
+        return LogicalType::BOOLEAN;
+    }
+    if (upper == "BLOB") {
+        return LogicalType::BLOB;
+    }
+    return LogicalType::VARCHAR;
+}
 
 bool IsValidColumnSpec(const string& spec) {
     auto sep = spec.find(':');
@@ -32,7 +55,13 @@ bool IsValidColumnSpec(const string& spec) {
     return spec.find(':', sep + 1) == string::npos;
 }
 
-void ParseScanOptions(TableFunctionBindInput& input, HbaseScanBindData& result) {
+RemoteColumn ParseColumnSpec(const string& spec) {
+    auto sep = spec.find(':');
+    return RemoteColumn{spec.substr(0, sep), spec.substr(sep + 1), "VARCHAR"};
+}
+
+void ParseScanOptions(TableFunctionBindInput& input, HbaseScanBindData& result,
+                      vector<string>& column_specs) {
     for (auto& kv : input.named_parameters) {
         auto& key = kv.first;
         auto& value = kv.second;
@@ -50,7 +79,7 @@ void ParseScanOptions(TableFunctionBindInput& input, HbaseScanBindData& result) 
                     throw BinderException("hbase_scan: 列描述 '%s' 非法，期望 family:qualifier",
                                           spec);
                 }
-                result.columns.push_back(std::move(spec));
+                column_specs.push_back(std::move(spec));
             }
         } else if (key == "start_row") {
             result.start_row = value;
@@ -93,33 +122,53 @@ unique_ptr<FunctionData> HbaseScanBind(ClientContext& context, TableFunctionBind
 
     auto connection_name = StringValue::Get(input.inputs[0]);
     auto& registry = GetConnectionRegistry(context);
-    if (!registry.TryGet(connection_name, result->connection)) {
+    ConnectionEntry entry;
+    if (!registry.TryGet(connection_name, entry)) {
         throw BinderException(
             "hbase_scan: 连接 '%s' 未注册，请先执行 SELECT hbase_connect('%s', 'grpc://host:port')",
             connection_name, connection_name);
     }
 
+    result->connection = entry.config;
+    result->provider = entry.provider;
     result->namespace_name = StringValue::Get(input.inputs[1]);
     result->table_name = StringValue::Get(input.inputs[2]);
     if (result->table_name.empty()) {
         throw BinderException("hbase_scan: 表名不能为空");
     }
 
-    ParseScanOptions(input, *result);
+    vector<string> column_specs;
+    ParseScanOptions(input, *result, column_specs);
 
-    // M1 骨架：Schema 需要由 Gateway GetSchema 提供，RemoteScanProvider 尚未接入，
-    // 因此这里无法确定输出列与类型。跟踪项见 docs/roadmap.md M1。
-    throw NotImplementedException("hbase_scan: 已识别连接 '%s' (%s) 与表 '%s.%s'，但 "
-                                  "RemoteScanProvider 尚未接入（M1 进行中）",
-                                  connection_name, result->connection.endpoint,
-                                  result->namespace_name, result->table_name);
+    if (!column_specs.empty()) {
+        // 显式列：类型默认 VARCHAR（HBase 无类型信息，类型映射规则待定）
+        for (auto& spec : column_specs) {
+            result->columns.push_back(ParseColumnSpec(spec));
+        }
+    } else if (result->provider) {
+        auto schema = result->provider->GetSchema(result->namespace_name, result->table_name);
+        result->columns = schema.columns;
+    }
+
+    if (result->columns.empty()) {
+        throw BinderException(
+            "hbase_scan: 表 '%s.%s' 没有可用列，请显式指定 columns := ['cf:qualifier']",
+            result->namespace_name, result->table_name);
+    }
+
+    for (auto& column : result->columns) {
+        auto name =
+            column.qualifier.empty() ? column.family : column.family + ":" + column.qualifier;
+        names.push_back(Identifier(name));
+        return_types.push_back(MapSqlType(column.sql_type));
+    }
 
     return std::move(result);
 }
 
 void HbaseScanExecute(ClientContext& context, TableFunctionInput& data, DataChunk& output) {
-    // Bind 阶段会抛错，此函数在 Provider 接入后实现流式拉取。
-    throw InternalException("hbase_scan: 执行阶段尚未实现（M1 进行中）");
+    // Bind 已拿到 Schema；数据面（Arrow IPC 解码）在下一阶段实现。
+    throw NotImplementedException("hbase_scan: Scan 数据面（Arrow IPC）尚未实现（M1 进行中）");
 }
 
 }  // namespace
