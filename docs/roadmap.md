@@ -27,8 +27,9 @@
 
 关键任务：
 
-- [ ] 锁定 DuckDB 版本与源码 Commit，基于官方 Extension Template 搭建 CMake 工程与单元测试骨架
-- [ ] 实现 Extension Registry 与 `hbase_connect()` / `hbase_disconnect()`
+- [x] 锁定 DuckDB 版本与源码 Commit（v2.0.0 / d54cbbe），基于官方 Extension Template 搭建 CMake 工程与 SQLLogicTest 骨架
+- [x] 实现 Extension Registry 与 `hbase_connect()` / `hbase_disconnect()`（含端点解析、会话级连接表、fallible 声明）
+- [ ] `hbase_scan()` 参数解析与校验（已完成骨架，Schema 与远端扫描待 Provider 接入）
 - [ ] 实现 `hbase_scan()` Table Function 的 Bind、Init、Global/Local State 与并行 Scan 骨架
 - [ ] 实现 Projection Pushdown 与 Filter Pushdown 的最小可用路径（Required Columns 与 Output Columns 分离）
 - [ ] 实现 `hbase_columns()` / `hbase_tables()` 的 Schema 获取

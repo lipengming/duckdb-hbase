@@ -76,6 +76,7 @@ gateway-server ──> gateway-core ──> gateway-api <── adapter-*
   - Scan 并行度由 DuckDB 调度，LocalState 不得跨线程共享
   - 缓存写入使用 Copy-on-Write + 临时文件 `fsync` + `rename` 原子提交
 - 内存与流式：禁止全量结果集驻留内存；Arrow RecordBatch 处理完即释放。
+- 可抛错函数必须显式声明：DuckDB 2.0 起，Scalar/Aggregate 函数若可能在执行期抛异常，必须调用 `SetFallible()`（`FunctionErrors::CAN_THROW_RUNTIME_ERROR`），否则异常会被包装成 `INTERNAL Error: ... is not marked as fallible`。
 - 日志：统一 `common/logger`，禁止 `printf`/`std::cout`；按行数据不得打印。
 - 单元测试：`extension/test/unit/`，使用 DuckDB 测试框架，新增逻辑必须覆盖正常路径与边界。
 

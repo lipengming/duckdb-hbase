@@ -83,7 +83,23 @@ duckdb-hbase/
 
 ## 快速开始
 
-当前仓库处于设计阶段，尚无可构建产物；实现进展见 [路线图](docs/roadmap.md)。设计评审请从 [技术方案 V1.0](tech_v0.1.md) 与 [架构总览](docs/architecture.md) 开始。
+M1 进行中：Extension 骨架已可构建并通过 SQLLogicTest，远端扫描与 Java Gateway 尚未接入。
+
+```bash
+git clone --recurse-submodules https://github.com/lipengming/duckdb-hbase.git
+cd duckdb-hbase
+
+# 构建（首次约 15-30 分钟；需要 cmake / ninja / python3 / C++17 编译器）
+GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
+
+# 运行本仓库的 SQLLogicTest
+./build/release/test/unittest "test/sql/hbase_basic.test"
+
+# 手工体验（本地未签名扩展必须加 -unsigned）
+./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/hbase/hbase.duckdb_extension'; SELECT hbase_version();"
+```
+
+HBase 测试环境准备见 [环境准备清单](docs/environment.md)，实现进展见 [路线图](docs/roadmap.md)。
 
 ## 参与贡献
 

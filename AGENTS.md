@@ -9,7 +9,8 @@ DuckDB-HBase 是一个 DuckDB C++ Extension：通过统一 `RemoteScanProvider` 
 ## 2. 当前阶段（重要）
 
 - **设计阶段已完成**：`tech_v0.1.md` 是 V1.0 技术方案的唯一基线，共 13 章。
-- **代码尚未开始**：`extension/`、`gateway/`、`protocol/` 目前只有目录与说明，没有可编译产物。不要假设已有构建系统、测试命令或 CI。
+- **M1 进行中**：`extension/` 已有可编译骨架（`hbase_version` / `hbase_connect` / `hbase_disconnect` / `hbase_scan` 参数解析），能通过 `make release` 构建并跑 SQLLogicTest；远端扫描与 Java Gateway 尚未接入。
+- **尚无 Gateway / 缓存 / 真实 HBase 链路**：`gateway/` 仍是目录说明；`hbase_scan` 在 Bind 阶段显式报错（Provider 未接入），不要把它当成可用功能。
 - 任何实现工作都对应 `docs/roadmap.md` 中的 M1-M5 里程碑；没有对应里程碑的“顺手重构”不做。
 
 ## 3. 阅读顺序（按任务类型）
@@ -35,6 +36,10 @@ duckdb-hbase/
 ├── CONTRIBUTING.md           # 协作流程、分支与 PR 规范
 ├── CHANGELOG.md              # 版本变更记录
 ├── tech_v0.1.md              # 设计基线（V1.0 技术方案，权威）
+├── CMakeLists.txt            # Extension 构建入口
+├── Makefile                  # 封装 extension-ci-tools 的构建/测试目标
+├── extension_config.cmake    # 告诉 DuckDB 构建哪些扩展
+├── vcpkg.json                # C++ 依赖清单（当前为空，接 gRPC 时再补）
 ├── docs/                     # 工程文档（由设计基线派生）
 │   ├── architecture.md       # 分层、依赖方向、模块边界
 │   ├── extension-design.md   # C++ Extension 设计
@@ -46,11 +51,15 @@ duckdb-hbase/
 │   ├── testing.md            # 测试策略
 │   ├── roadmap.md            # M1-M5 里程碑
 │   └── coding-standards.md   # 编码规范（硬约束）
-├── extension/                # C++ Extension（CMake）
-├── gateway/                  # Java Gateway（Maven 多模块）
+├── src/                      # Extension 源码（include/ + common/ + sql/）
+├── test/sql/                 # SQLLogicTest
+├── extension/                # C++ Extension 说明（实际源码在 src/、构建在仓库根）
+├── gateway/                  # Java Gateway（Maven 多模块，待实现）
 ├── protocol/proto/           # Protobuf 定义
-├── scripts/                  # 构建、打包、集成测试脚本
-└── examples/                 # SQL / Python / 配置示例
+├── scripts/                  # 环境自检、HBase 夹具、构建脚本
+├── examples/                 # SQL / Python / 配置示例
+├── duckdb/                   # submodule：DuckDB v2.0.0 源码（构建依赖，勿改）
+└── extension-ci-tools/       # submodule：官方扩展构建/测试脚本（勿改）
 ```
 
 ## 5. 不可违反的架构约束
@@ -77,24 +86,31 @@ duckdb-hbase/
 
 ## 7. 常用命令
 
-当前仓库尚无构建产物，以下命令在 M1 落地后生效（届时更新本节）：
-
 ```bash
 # 查看仓库状态与最近提交
 git status && git log --oneline -10
 
 # 全文检索（优先使用工具而非 cat）
-rg "hbase_scan" docs/ tech_v0.1.md
+rg "hbase_scan" docs/ src/ tech_v0.1.md
 
-# C++ 构建（M1 后）
-# cmake -S extension -B build && cmake --build build -j
+# 拉取 DuckDB / extension-ci-tools 子模块（首次 clone 必须）
+git submodule update --init --recursive
 
-# Java 构建（M2 后）
+# 构建 Extension（首次约 20 分钟，之后增量很快）
+GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
+
+# 运行 SQLLogicTest（可用路径过滤，只跑本仓库测试）
+./build/release/test/unittest "test/sql/hbase_basic.test"
+
+# 手工验证：-unsigned 是本地未签名扩展必须的
+./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/hbase/hbase.duckdb_extension'; SELECT hbase_version();"
+
+# 环境自检与 HBase 夹具（需要 HBase 2.6.x 已启动）
+bash scripts/check-env.sh
+bash scripts/hbase-fixture.sh
+
+# Java Gateway 构建（M1 进行中，落地后启用）
 # mvn -f gateway/pom.xml -DskipTests package
-
-# 运行测试（M1/M2 后）
-# ctest --test-dir build --output-on-failure
-# mvn -f gateway/pom.xml test
 ```
 
 ## 8. 文档同步矩阵
