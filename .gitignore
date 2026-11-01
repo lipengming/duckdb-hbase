@@ -78,6 +78,7 @@ venv/
 dist/
 
 # ---- 运行时数据与缓存 ----
+run/
 cache/
 scans/
 *.parquet.tmp

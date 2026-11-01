@@ -48,6 +48,7 @@ DuckDB-HBase 不只是一个 SQL Connector，而是一个具备多接入适配�
 | [开发环境（安装与使用）](docs/environment.md) | 本机四件套安装、HBase 启停、环境自检、常见问题 |
 | [部署指南](docs/deployment-guide.md) | 拓扑、配置、安全、超时重试、监控、故障处置 |
 | [测试策略](docs/testing.md) | 测试分层、用例清单、性能基线 |
+| [集成测试包](integration/README.md) | 客户交易宽表 mock 数据、HBase 夹具、可执行 pytest 用例矩阵 |
 | [路线图](docs/roadmap.md) | M1-M5 里程碑、任务清单与退出标准 |
 | [编码规范](docs/coding-standards.md) | 命名空间、依赖规则、错误模型、提交规范 |
 | [AI 编码指南](AGENTS.md) | 阅读顺序、硬约束、工作流、文档同步矩阵 |
@@ -79,6 +80,7 @@ duckdb-hbase/
 ├── gateway/            # Java Gateway（Maven 多模块）
 ├── protocol/proto/     # Protobuf 协议定义
 ├── scripts/            # 构建、打包、集成测试脚本
+├── integration/        # 独立集成测试包（1M 交易宽表 mock、HBase 夹具、pytest 用例）
 └── examples/           # SQL / Python / 配置示例
 ```
 
@@ -90,14 +92,13 @@ M1 进行中：Extension 骨架已可构建并通过 SQLLogicTest；Gateway 骨�
 git clone --recurse-submodules https://github.com/lipengming/duckdb-hbase.git
 cd duckdb-hbase
 
-# 1. 本机开发环境（JDK 11 / Maven / HBase 2.6.6 / DuckDB CLI 2.0.0），幂等、无需 sudo
+# 1. 首次搭机器才需要（JDK 11 / Maven / HBase 2.6.6 / DuckDB CLI 2.0.0，幂等、无需 sudo）
 bash scripts/install-dev-env.sh
 
-# 2. 起 HBase 并建测试夹具
-start-hbase.sh
-bash scripts/hbase-fixture.sh
+# 2. 统一启动：HBase + 夹具 + Gateway（幂等，可反复执行）
+bash scripts/env-up.sh
 
-# 3. 构建（首次约 15-30 分钟；需要 cmake / ninja / python3 / C++17 编译器）
+# 3. 构建扩展（首次约 15-30 分钟；需要 cmake / ninja / python3 / C++17 编译器）
 GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
 
 # 4. 运行本仓库的 SQLLogicTest
@@ -106,11 +107,16 @@ GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
 # 5. 手工体验（本地未签名扩展必须加 -unsigned）
 ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/hbase/hbase.duckdb_extension'; SELECT hbase_version();"
 
+# 5b. 集成测试夹具：100 万行客户交易宽表（单客户 10 万/50 万/100 万三档）
+cd integration && pip install -e '.[test]'
+python -m duckdb_hbase_it all && pytest -m dataplane && cd ..
+
 # 6. Gateway（需要 JDK 11 + Maven）
 mvn -q -f gateway/pom.xml -DskipTests package
 
-# 7. 收工
-stop-hbase.sh
+# 7. 检查环境 / 收工
+bash scripts/env-check.sh
+bash scripts/env-down.sh
 ```
 
 环境安装、HBase 启停、自检与常见问题见 [开发环境安装与使用说明](docs/environment.md)，实现进展见 [路线图](docs/roadmap.md)。

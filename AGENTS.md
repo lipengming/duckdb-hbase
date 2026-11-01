@@ -60,6 +60,7 @@ duckdb-hbase/
 ├── gateway/                  # Java Gateway（Maven 多模块：api/core/adapter-native/server）
 ├── protocol/proto/           # Protobuf 定义
 ├── scripts/                  # 环境自检、HBase 夹具、构建脚本
+├── integration/              # 独立集成测试包（1M 客户交易宽表 mock、HBase 夹具、pytest 用例）
 ├── examples/                 # SQL / Python / 配置示例
 ├── duckdb/                   # submodule：DuckDB v2.0.0 源码（构建依赖，勿改）
 └── extension-ci-tools/       # submodule：官方扩展构建/测试脚本（勿改）
@@ -108,12 +109,16 @@ GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
 # 手工验证：-unsigned 是本地未签名扩展必须的
 ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/hbase/hbase.duckdb_extension'; SELECT hbase_version();"
 
-# 本机开发环境一键安装（JDK 11 / Maven / HBase 2.6.6 / DuckDB CLI 2.0.0，幂等）
-bash scripts/install-dev-env.sh
+# 统一环境：启动（HBase + 夹具 + Gateway）/ 检查 / 停止
+bash scripts/env-up.sh
+bash scripts/env-check.sh
+bash scripts/env-down.sh
 
-# 环境自检与 HBase 夹具（需要 HBase 2.6.x 已启动）
-bash scripts/check-env.sh
+# 仅需重新建夹具表时
 bash scripts/hbase-fixture.sh
+
+# 首次搭建机器才需要（已装好环境则跳过）
+bash scripts/install-dev-env.sh
 
 # Java Gateway：构建 + 单测（需要 JDK 11 / Maven）
 mvn -q -f gateway/pom.xml -DskipTests package

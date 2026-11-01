@@ -14,6 +14,12 @@
 
 | 脚本 | 作用 | 状态 |
 | --- | --- | --- |
+| `env-up.sh` | 统一启动：HBase（按需）+ 夹具（按需）+ 构建并启动 Gateway | 可用 |
+| `env-down.sh` | 统一停止：Gateway（pid 文件）+ HBase（可 `--keep-hbase`） | 可用 |
+| `env-check.sh` | 统一检查：工具链 / HBase / 夹具 / Gateway / Extension，只读不改 | 可用 |
+| `check-env.sh` | 兼容入口，转发到 `env-check.sh` | 保留 |
+| `hbase-fixture.sh` | 创建 `duckdb_test` 夹具表与数据（可重复执行） | 可用 |
+| `install-dev-env.sh` | 本机四件套安装（用户级、幂等）；环境已装好时不需要执行 | 可用 |
 | `build-extension.sh` | 构建 C++ Extension 产物 | 待实现（M1） |
 | `build-gateway.sh` | Maven 构建 Gateway 与 Adapter | 待实现（M2） |
 | `package.sh` | 打包 Extension 与 Gateway 发行物 | 待实现（M3） |

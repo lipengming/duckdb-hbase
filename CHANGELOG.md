@@ -6,6 +6,10 @@
 
 ### Added
 
+- **统一环境脚本**：`scripts/env-up.sh`（HBase + 夹具 + Gateway 一键启动，幂等）、`scripts/env-down.sh`（停止，可 `--keep-hbase`）、`scripts/env-check.sh`（只读体检：工具链 / HBase / 夹具 / Gateway / Extension）；`check-env.sh` 保留为兼容入口。
+- **本机验证**：Gateway 集成测试（Native Adapter 直连 HBase、进程内 gRPC Server）共 11 项全部通过。
+- **集成测试包**（`integration/`，独立 Python 包，不参与 Extension/Gateway 构建）：确定性中文「客户交易宽表」mock 数据（100 万行，单客户 10 万/50 万/100 万三档，30 天跨度，RowKey=`<salt><user_id>#<yyyymmdd>#<seq>`），HBase 16 预分区建表与 BufferedMutator 批量装载（1M 行实测 42s），manifest 抽样校验，以及数据面 / Extension / 缓存 / 规模 / 错误路径五组 pytest 用例；环境缺失或 `hbase_scan` 数据面未实现时自动 skip。
+- **文档**：`docs/testing.md` 新增 §5.2 客户交易宽表与 §5.4 可执行集成测试包、用例编号与执行约定；`docs/environment.md` 新增 §7.1 规模夹具用法；`integration/README.md` 记录数据模型、三档切换、CLI、环境变量与已知限制。
 - **M1 Gateway 骨架**：Maven 多模块（`gateway-api` / `gateway-core` / `adapter-native` / `gateway-server`）、`HBaseAccessAdapter` SPI + `ServiceLoader` 装配、Native HBase Adapter（Scan / BatchGet / 表结构 / 取消 / 健康检查）、gRPC 服务（Health / GetCapabilities / GetSchema / Cancel 已接通，Scan 与 BatchGet 待 Arrow IPC）。
 - **协议补充**：`CapabilityResponse`（11 项能力）、`SchemaRequest` / `ColumnSchema` / `SchemaResponse`、`CancelRequest` / `CancelResponse`、`HealthRequest` / `HealthResponse` 字段定稿（草案），并开启 `java_multiple_files`。
 - **文档**：`docs/gateway-design.md` 增加 M1 实现状态与包名偏差说明；`docs/protocol.md` 补齐新增消息字段表。
