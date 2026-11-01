@@ -12,6 +12,7 @@ syntax = "proto3";
 package duckdb.hbase.v1;
 
 option java_package = "com.duckdb.hbase.protocol.v1";
+option java_multiple_files = true;
 
 // HBase 数据访问服务：由 Extension 调用，Gateway 实现。
 service HBaseDataService {
@@ -101,35 +102,61 @@ message ArrowBatch {
 }
 
 // 能力协商请求。
-// 待定（TBD）：方案 §3.5 未定义字段，评审后补充，禁止擅自编号。
 message CapabilityRequest {}
 
-// 能力协商响应。
-// 待定（TBD）：方案 §3.5 未定义字段；语义应覆盖 §3.4 的 ProviderCapabilities
-// （supports_scan、supports_batch_get、supports_rowkey_range、max_batch_size 等 11 项），
-// 字段名与编号须经协议评审后补充。
-message CapabilityResponse {}
+// 能力协商响应：逐项对应方案 §3.4 的 ProviderCapabilities。
+message CapabilityResponse {
+  bool supports_scan = 1;
+  bool supports_batch_get = 2;
+  bool supports_rowkey_range = 3;
+  bool supports_column_projection = 4;
+  bool supports_timestamp = 5;
+  bool supports_versions = 6;
+  bool supports_filter_pushdown = 7;
+  bool supports_async_scan = 8;
+  bool supports_cancellation = 9;
+  int32 max_batch_size = 10;
+  int32 max_parallel_scans = 11;
+}
 
 // Schema 查询请求。
-// 待定（TBD）：至少需要 namespace / table 定位，方案 §3.5 未给出字段定义，暂不编号。
-message SchemaRequest {}
+message SchemaRequest {
+  // HBase Namespace。
+  string namespace = 1;
+  // 表名。
+  string table = 2;
+}
+
+// 单列 Schema。HBase 无固定 schema，qualifier 为空表示整列族。
+message ColumnSchema {
+  string family = 1;
+  string qualifier = 2;
+  // DuckDB LogicalType 名称（如 VARCHAR/BIGINT），映射规则见 docs/protocol.md。
+  string sql_type = 3;
+}
 
 // Schema 查询响应。
-// 待定（TBD）：应包含 Schema 与 Logical Type 描述，方案 §3.5 未给出字段定义。
-message SchemaResponse {}
+message SchemaResponse {
+  repeated ColumnSchema columns = 1;
+}
 
-// 取消请求。
-// 待定（TBD）：语义上需携带 request_id，方案 §3.5 未定义字段，暂不编号。
-message CancelRequest {}
+// 取消请求：按 request_id 幂等。
+message CancelRequest {
+  string request_id = 1;
+}
 
 // 取消响应。
-// 待定（TBD）：需表达幂等取消结果，方案 §3.5 未定义字段。
-message CancelResponse {}
+message CancelResponse {
+  bool cancelled = 1;
+}
 
 // 健康检查请求。
-// 待定（TBD）：方案 §3.5 未定义字段。
 message HealthRequest {}
 
 // 健康检查响应。
-// 待定（TBD）：方案 §3.5 未定义字段。
-message HealthResponse {}
+message HealthResponse {
+  // serving / not_serving / unknown
+  string status = 1;
+  // Gateway 版本。
+  string version = 2;
+}

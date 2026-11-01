@@ -76,18 +76,60 @@
 | `finished` | 3 | `bool` | 是否为本次请求的最后一批 |
 | `row_count` | 4 | `uint64` | 本批行数 |
 
-### 3.5 来源未定义的消息
+### 3.5 CapabilityResponse
 
-方案 §3.5 只给出消息名与 RPC 签名，未给出下列消息的字段，本草案不擅自编号，统一标注待定（TBD）：
+逐项对应方案 §3.4 的 `ProviderCapabilities`；Extension 必须以此为准，不得假定所有适配器能力一致。
 
-| 消息 | 已知信息 | 状态 |
-| --- | --- | --- |
-| `CapabilityRequest` / `CapabilityResponse` | 响应语义对应 §3.4 `ProviderCapabilities` 的 11 项能力 | 字段与编号待定（TBD） |
-| `SchemaRequest` / `SchemaResponse` | 需定位 Namespace / Table，并返回 Schema 与 Logical Type | 字段与编号待定（TBD） |
-| `CancelRequest` / `CancelResponse` | 语义上需携带 `request_id`，方案未给出字段定义 | 字段与编号待定（TBD） |
-| `HealthRequest` / `HealthResponse` | 无字段定义 | 字段与编号待定（TBD） |
+| 字段 | 编号 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `supports_scan` | 1 | `bool` | 是否支持 Scan |
+| `supports_batch_get` | 2 | `bool` | 是否支持 Batch Get；不支持时 Partial Hit 退化为范围 Scan |
+| `supports_rowkey_range` | 3 | `bool` | 是否支持 RowKey 范围扫描 |
+| `supports_column_projection` | 4 | `bool` | 是否支持列裁剪 |
+| `supports_timestamp` | 5 | `bool` | 是否支持时间戳过滤 |
+| `supports_versions` | 6 | `bool` | 是否支持多版本 |
+| `supports_filter_pushdown` | 7 | `bool` | 是否支持 Filter 下推 |
+| `supports_async_scan` | 8 | `bool` | 是否支持异步 Scan |
+| `supports_cancellation` | 9 | `bool` | 是否支持取消 |
+| `max_batch_size` | 10 | `int32` | 单批最大行数 |
+| `max_parallel_scans` | 11 | `int32` | 单连接最大并行 Scan 数 |
 
-方案 §4.5 还列出 `ErrorResponse`，但 §3.5 未定义其字段，同样待定（TBD）。在生产实现前，这些消息须经协议评审后补充，并遵守第 7 节的字段演进规则。
+`CapabilityRequest` 无字段。
+
+### 3.6 SchemaRequest / ColumnSchema / SchemaResponse
+
+| 消息 | 字段 | 编号 | 类型 | 说明 |
+| --- | --- | --- | --- | --- |
+| `SchemaRequest` | `namespace` | 1 | `string` | HBase Namespace |
+| `SchemaRequest` | `table` | 2 | `string` | 表名 |
+| `ColumnSchema` | `family` | 1 | `string` | 列族 |
+| `ColumnSchema` | `qualifier` | 2 | `string` | 列限定符；为空表示整列族 |
+| `ColumnSchema` | `sql_type` | 3 | `string` | DuckDB LogicalType 名称（如 `VARCHAR`、`BIGINT`） |
+| `SchemaResponse` | `columns` | 1 | `repeated ColumnSchema` | 列列表 |
+
+说明：HBase 是 schemaless，列族以外的 qualifier 无法从 `TableDescriptor` 获得；Native Adapter 当前只返回列族（`qualifier` 为空），具体列在首次读取时发现。类型推断规则见 §3.8。
+
+### 3.7 CancelRequest / CancelResponse / HealthRequest / HealthResponse
+
+| 消息 | 字段 | 编号 | 类型 | 说明 |
+| --- | --- | --- | --- | --- |
+| `CancelRequest` | `request_id` | 1 | `string` | 待取消的请求 ID |
+| `CancelResponse` | `cancelled` | 1 | `bool` | 是否确实取消了仍在执行的请求（幂等） |
+| `HealthRequest` | — | — | — | 无字段 |
+| `HealthResponse` | `status` | 1 | `string` | `serving` / `not_serving` / `unknown` |
+| `HealthResponse` | `version` | 2 | `string` | Gateway 版本 |
+
+### 3.8 类型映射（待定）
+
+`sql_type` 与 HBase 字节值的映射规则尚未定稿（TBD）：M1 先统一按 `VARCHAR` 处理，后续按 HBase `Bytes` 工具与业务约定补齐 `BIGINT`/`DOUBLE`/`BOOLEAN` 等映射。
+
+### 3.9 尚未定义的消息
+
+`ErrorResponse` 在方案 §4.5 中仅列名字，字段与错误码仍未定义（TBD）。M1 阶段 gRPC 错误通过 `Status`（如 `UNIMPLEMENTED` / `INTERNAL`）返回，生产实现前须补充正式错误模型。
+
+### 3.10 生成代码约定
+
+`.proto` 声明 `option java_multiple_files = true;`，Java 生成类直接位于 `com.duckdb.hbase.protocol.v1` 包下，便于按类导入。
 
 ## 4. 错误模型
 
