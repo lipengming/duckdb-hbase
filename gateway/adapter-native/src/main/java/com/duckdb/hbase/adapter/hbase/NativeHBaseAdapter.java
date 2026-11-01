@@ -88,26 +88,26 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
   @Override
   public ScanCursor scan(ScanRequest request) throws HBaseAccessException {
     TableName tableName = toTableName(request.getNamespace(), request.getTable());
-    Scan scan = new Scan();
-
-    if (!request.getStartRow().isEmpty()) {
-      scan.withStartRow(request.getStartRow().toByteArray(), request.getIncludeStart());
-    }
-    if (!request.getStopRow().isEmpty()) {
-      scan.withStopRow(request.getStopRow().toByteArray(), request.getIncludeStop());
-    }
-    applyColumns(scan, request.getColumnsList());
-
-    scan.readVersions(Math.max(1, request.getMaxVersions()));
-    if (request.getMaxTimestamp() > 0) {
-      scan.setTimeRange(request.getMinTimestamp(), request.getMaxTimestamp());
-    }
-    if (request.getBatchSize() > 0) {
-      scan.setCaching(request.getBatchSize());
-    }
-
     Table table = null;
     try {
+      Scan scan = new Scan();
+      if (!request.getStartRow().isEmpty()) {
+        scan.withStartRow(request.getStartRow().toByteArray(), request.getIncludeStart());
+      }
+      if (!request.getStopRow().isEmpty()) {
+        scan.withStopRow(request.getStopRow().toByteArray(), request.getIncludeStop());
+      }
+      applyColumns(scan, request.getColumnsList());
+
+      scan.readVersions(Math.max(1, request.getMaxVersions()));
+      // setTimeRange 会抛 IOException，必须放在 try 内
+      if (request.getMaxTimestamp() > 0) {
+        scan.setTimeRange(request.getMinTimestamp(), request.getMaxTimestamp());
+      }
+      if (request.getBatchSize() > 0) {
+        scan.setCaching(request.getBatchSize());
+      }
+
       table = connection.getTable(tableName);
       ResultScanner scanner = table.getScanner(scan);
       NativeScanCursor cursor = new NativeScanCursor(request.getRequestId(), table, scanner);
@@ -122,18 +122,19 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
   @Override
   public ScanCursor batchGet(BatchGetRequest request) throws HBaseAccessException {
     TableName tableName = toTableName(request.getNamespace(), request.getTable());
-    List<Get> gets = new ArrayList<>(request.getRowkeysCount());
-    for (com.google.protobuf.ByteString rowKey : request.getRowkeysList()) {
-      Get get = new Get(rowKey.toByteArray());
-      applyColumns(get, request.getColumnsList());
-      if (request.getMaxTimestamp() > 0) {
-        get.setTimeRange(request.getMinTimestamp(), request.getMaxTimestamp());
-      }
-      gets.add(get);
-    }
-
     Table table = null;
     try {
+      List<Get> gets = new ArrayList<>(request.getRowkeysCount());
+      for (com.google.protobuf.ByteString rowKey : request.getRowkeysList()) {
+        Get get = new Get(rowKey.toByteArray());
+        applyColumns(get, request.getColumnsList());
+        // setTimeRange 会抛 IOException，必须放在 try 内
+        if (request.getMaxTimestamp() > 0) {
+          get.setTimeRange(request.getMinTimestamp(), request.getMaxTimestamp());
+        }
+        gets.add(get);
+      }
+
       table = connection.getTable(tableName);
       Result[] results = table.get(gets);
       NativeGetCursor cursor = new NativeGetCursor(request.getRequestId(), table, results);
