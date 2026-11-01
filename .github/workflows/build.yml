@@ -14,7 +14,7 @@ jobs:
   build-and-test:
     name: Build & SQLLogicTest (linux x64)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@v4
@@ -33,12 +33,26 @@ jobs:
         with:
           key: ${{ runner.os }}-duckdb-2.0.0
 
-      - name: Build extension
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg
+          key: vcpkg-${{ hashFiles('vcpkg.json') }}
+
+      - name: Setup vcpkg
+        run: |
+          if [ ! -x "$RUNNER_TEMP/vcpkg/vcpkg" ]; then
+            git clone --depth 1 https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+            "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          fi
+
+      - name: Build extension (with gRPC/Protobuf via vcpkg)
         env:
           CC: gcc
           CXX: g++
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          VCPKG_TOOLCHAIN_PATH: ${{ runner.temp }}/vcpkg/scripts/buildsystems/vcpkg.cmake
         run: |
           GEN=ninja make release
 

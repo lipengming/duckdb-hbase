@@ -6,6 +6,8 @@
 
 ### Added
 
+- **Extension 远端 Provider**：`IRemoteScanProvider` 抽象、gRPC 客户端（Health / GetCapabilities / GetSchema）、`hbase_connect` 建连即握手（失败不注册连接）、`hbase_scan` 从 Gateway 取 Schema 完成 Bind；数据面 Arrow IPC 待实现。
+- **构建**：vcpkg 引入 gRPC/Protobuf，CMake 自动从 `protocol/proto` 生成 C++ 桩。
 - **统一环境脚本**：`scripts/env-up.sh`（HBase + 夹具 + Gateway 一键启动，幂等）、`scripts/env-down.sh`（停止，可 `--keep-hbase`）、`scripts/env-check.sh`（只读体检：工具链 / HBase / 夹具 / Gateway / Extension）；`check-env.sh` 保留为兼容入口。
 - **本机验证**：Gateway 集成测试（Native Adapter 直连 HBase、进程内 gRPC Server）共 11 项全部通过。
 - **集成测试包**（`integration/`，独立 Python 包，不参与 Extension/Gateway 构建）：确定性中文「客户交易宽表」mock 数据（100 万行，单客户 10 万/50 万/100 万三档，30 天跨度，RowKey=`<salt><user_id>#<yyyymmdd>#<seq>`），HBase 16 预分区建表与 BufferedMutator 批量装载（1M 行实测 42s），manifest 抽样校验，以及数据面 / Extension / 缓存 / 规模 / 错误路径五组 pytest 用例；环境缺失或 `hbase_scan` 数据面未实现时自动 skip。

@@ -9,9 +9,9 @@ DuckDB-HBase 是一个 DuckDB C++ Extension：通过统一 `RemoteScanProvider` 
 ## 2. 当前阶段（重要）
 
 - **设计阶段已完成**：`tech_v0.1.md` 是 V1.0 技术方案的唯一基线，共 13 章。
-- **M1 进行中**：`extension/` 已有可编译骨架（`hbase_version` / `hbase_connect` / `hbase_disconnect` / `hbase_scan` 参数解析），能通过 `make release` 构建并跑 SQLLogicTest；Extension 侧的 Provider 尚未接入。
+- **M1 进行中**：`extension/` 已接入 gRPC Provider（`hbase_connect` 握手、`hbase_scan` 从 Gateway 取 Schema），能通过 `make release` 构建并跑 SQLLogicTest；数据面 Arrow IPC 待实现。
 - **Gateway 骨架已就位**：`gateway/` 有 Maven 多模块、Adapter SPI、Native Adapter 与 gRPC 服务；Health / GetCapabilities / GetSchema / Cancel 可用，Scan 与 BatchGet 因 Arrow IPC 编码未完成返回 `UNIMPLEMENTED`。
-- **尚无缓存与真实 HBase 端到端链路**：`hbase_scan` 在 Bind 阶段显式报错（Provider 未接入），不要把它当成可用功能。
+- **Extension ↔ Gateway 已打通（握手 + Schema）**：`hbase_connect` 走 gRPC 握手（Health + GetCapabilities），`hbase_scan` 可从 Gateway 取 Schema 完成 Bind；**数据面（Arrow IPC）仍未实现**，查询会在执行阶段报 `Not implemented`。
 - 任何实现工作都对应 `docs/roadmap.md` 中的 M1-M5 里程碑；没有对应里程碑的“顺手重构”不做。
 
 ## 3. 阅读顺序（按任务类型）
@@ -40,7 +40,7 @@ duckdb-hbase/
 ├── tech_v0.1.md              # 设计基线（V1.0 技术方案，权威）
 ├── Makefile                  # 封装 extension-ci-tools 的构建/测试目标
 ├── extension_config.cmake    # 告诉 DuckDB 构建哪个扩展（SOURCE_DIR=extension/）
-├── vcpkg.json                # C++ 依赖清单（当前为空，接 gRPC 时再补）
+├── vcpkg.json                # C++ 依赖清单（grpc/protobuf，需配合 VCPKG_TOOLCHAIN_PATH 构建）
 ├── docs/                     # 工程文档（由设计基线派生）
 │   ├── architecture.md       # 分层、依赖方向、模块边界
 │   ├── extension-design.md   # C++ Extension 设计
