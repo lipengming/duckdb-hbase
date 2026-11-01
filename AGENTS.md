@@ -25,6 +25,7 @@ DuckDB-HBase 是一个 DuckDB C++ Extension：通过统一 `RemoteScanProvider` 
 | 改协议 | `docs/protocol.md`、`protocol/proto/*.proto` | `tech_v0.1.md` §3.5 |
 | 改 SQL / 参数 | `docs/user-guide.md`、`docs/extension-design.md` | `tech_v0.1.md` §4 |
 | 部署 / 安全 | `docs/deployment-guide.md` | `tech_v0.1.md` §8 |
+| 搭本机环境 / 依赖版本 | `docs/environment.md` | `scripts/install-dev-env.sh` |
 | 测试 / 验收 | `docs/testing.md`、`docs/roadmap.md` | `tech_v0.1.md` §9-§10 |
 
 ## 4. 仓库地图
@@ -48,6 +49,7 @@ duckdb-hbase/
 │   ├── cache-design.md       # 缓存引擎与一致性
 │   ├── user-guide.md         # 用户使用指南
 │   ├── deployment-guide.md   # 部署、安全、运维
+│   ├── environment.md        # 本机开发环境安装与使用（JDK/Maven/HBase/DuckDB）
 │   ├── testing.md            # 测试策略
 │   ├── roadmap.md            # M1-M5 里程碑
 │   └── coding-standards.md   # 编码规范（硬约束）
@@ -105,6 +107,9 @@ GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
 
 # 手工验证：-unsigned 是本地未签名扩展必须的
 ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/hbase/hbase.duckdb_extension'; SELECT hbase_version();"
+
+# 本机开发环境一键安装（JDK 11 / Maven / HBase 2.6.6 / DuckDB CLI 2.0.0，幂等）
+bash scripts/install-dev-env.sh
 
 # 环境自检与 HBase 夹具（需要 HBase 2.6.x 已启动）
 bash scripts/check-env.sh

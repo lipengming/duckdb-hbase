@@ -45,6 +45,7 @@ DuckDB-HBase 不只是一个 SQL Connector，而是一个具备多接入适配�
 | [协议定义](docs/protocol.md) | RPC、消息、错误模型、能力协商、版本兼容 |
 | [缓存设计](docs/cache-design.md) | Segment、Coverage Index、命中判定、补列、一致性 |
 | [用户指南](docs/user-guide.md) | 安装、配置、SQL/Python 示例、缓存管理、排查 |
+| [开发环境（安装与使用）](docs/environment.md) | 本机四件套安装、HBase 启停、环境自检、常见问题 |
 | [部署指南](docs/deployment-guide.md) | 拓扑、配置、安全、超时重试、监控、故障处置 |
 | [测试策略](docs/testing.md) | 测试分层、用例清单、性能基线 |
 | [路线图](docs/roadmap.md) | M1-M5 里程碑、任务清单与退出标准 |
@@ -89,20 +90,30 @@ M1 进行中：Extension 骨架已可构建并通过 SQLLogicTest；Gateway 骨�
 git clone --recurse-submodules https://github.com/lipengming/duckdb-hbase.git
 cd duckdb-hbase
 
-# 构建（首次约 15-30 分钟；需要 cmake / ninja / python3 / C++17 编译器）
+# 1. 本机开发环境（JDK 11 / Maven / HBase 2.6.6 / DuckDB CLI 2.0.0），幂等、无需 sudo
+bash scripts/install-dev-env.sh
+
+# 2. 起 HBase 并建测试夹具
+start-hbase.sh
+bash scripts/hbase-fixture.sh
+
+# 3. 构建（首次约 15-30 分钟；需要 cmake / ninja / python3 / C++17 编译器）
 GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
 
-# 运行本仓库的 SQLLogicTest
+# 4. 运行本仓库的 SQLLogicTest
 ./build/release/test/unittest "*hbase*"
 
-# 手工体验（本地未签名扩展必须加 -unsigned）
+# 5. 手工体验（本地未签名扩展必须加 -unsigned）
 ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/hbase/hbase.duckdb_extension'; SELECT hbase_version();"
 
-# Gateway（需要 JDK 11 + Maven）
+# 6. Gateway（需要 JDK 11 + Maven）
 mvn -q -f gateway/pom.xml -DskipTests package
+
+# 7. 收工
+stop-hbase.sh
 ```
 
-HBase 测试环境准备见 [环境准备清单](docs/environment.md)，实现进展见 [路线图](docs/roadmap.md)。
+环境安装、HBase 启停、自检与常见问题见 [开发环境安装与使用说明](docs/environment.md)，实现进展见 [路线图](docs/roadmap.md)。
 
 ## 参与贡献
 

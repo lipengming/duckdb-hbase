@@ -209,7 +209,7 @@ duckdb                                      # 交互式（内存库）
 duckdb my.db                                # 打开/创建数据库文件
 duckdb -c "SELECT 42"                       # 单条命令
 duckdb -csv -c "SELECT * FROM range(3)"     # 切换输出格式（-csv / -json / -markdown / -box）
-duckdb -f examples/query.sql                # 执行 SQL 文件
+duckdb -f query.sql                         # 执行 SQL 文件
 ```
 
 验证本仓库扩展（**本地未签名扩展必须加 `-unsigned`**）：
