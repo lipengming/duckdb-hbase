@@ -9,8 +9,9 @@ DuckDB-HBase 是一个 DuckDB C++ Extension：通过统一 `RemoteScanProvider` 
 ## 2. 当前阶段（重要）
 
 - **设计阶段已完成**：`tech_v0.1.md` 是 V1.0 技术方案的唯一基线，共 13 章。
-- **M1 进行中**：`extension/` 已有可编译骨架（`hbase_version` / `hbase_connect` / `hbase_disconnect` / `hbase_scan` 参数解析），能通过 `make release` 构建并跑 SQLLogicTest；远端扫描与 Java Gateway 尚未接入。
-- **尚无 Gateway / 缓存 / 真实 HBase 链路**：`gateway/` 仍是目录说明；`hbase_scan` 在 Bind 阶段显式报错（Provider 未接入），不要把它当成可用功能。
+- **M1 进行中**：`extension/` 已有可编译骨架（`hbase_version` / `hbase_connect` / `hbase_disconnect` / `hbase_scan` 参数解析），能通过 `make release` 构建并跑 SQLLogicTest；Extension 侧的 Provider 尚未接入。
+- **Gateway 骨架已就位**：`gateway/` 有 Maven 多模块、Adapter SPI、Native Adapter 与 gRPC 服务；Health / GetCapabilities / GetSchema / Cancel 可用，Scan 与 BatchGet 因 Arrow IPC 编码未完成返回 `UNIMPLEMENTED`。
+- **尚无缓存与真实 HBase 端到端链路**：`hbase_scan` 在 Bind 阶段显式报错（Provider 未接入），不要把它当成可用功能。
 - 任何实现工作都对应 `docs/roadmap.md` 中的 M1-M5 里程碑；没有对应里程碑的“顺手重构”不做。
 
 ## 3. 阅读顺序（按任务类型）
@@ -54,7 +55,7 @@ duckdb-hbase/
 ├── src/                      # Extension 源码（include/ + common/ + sql/）
 ├── test/sql/                 # SQLLogicTest
 ├── extension/                # C++ Extension 说明（实际源码在 src/、构建在仓库根）
-├── gateway/                  # Java Gateway（Maven 多模块，待实现）
+├── gateway/                  # Java Gateway（Maven 多模块：api/core/adapter-native/server）
 ├── protocol/proto/           # Protobuf 定义
 ├── scripts/                  # 环境自检、HBase 夹具、构建脚本
 ├── examples/                 # SQL / Python / 配置示例
@@ -109,8 +110,12 @@ GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
 bash scripts/check-env.sh
 bash scripts/hbase-fixture.sh
 
-# Java Gateway 构建（M1 进行中，落地后启用）
-# mvn -f gateway/pom.xml -DskipTests package
+# Java Gateway：构建 + 单测（需要 JDK 11 / Maven）
+mvn -q -f gateway/pom.xml -DskipTests package
+mvn -q -f gateway/pom.xml test
+
+# 启动 Gateway（先按 gateway/conf/application.properties 配好 ZooKeeper 地址）
+# java -jar gateway/gateway-server/target/gateway-server-0.1.0-SNAPSHOT.jar gateway/conf/application.properties
 ```
 
 ## 8. 文档同步矩阵

@@ -40,7 +40,7 @@ namespace common {}     // 配置、错误、日志、RowKey、类型工具
 - `com.duckdb.hbase.protocol`：Protobuf 生成类与 DTO 转换
 - `com.duckdb.hbase.spi`：`HBaseAccessAdapter` 等 SPI 接口
 - `com.duckdb.hbase.core`：服务实现、Factory、流式传输、安全
-- `com.duckdb.hbase.adapter.native|rest|thrift|phoenix`：各接入实现
+- `com.duckdb.hbase.adapter.hbase|rest|thrift|phoenix`：各接入实现（`native` 是 Java 关键字，Native Adapter 包名用 `adapter.hbase`）
 - `com.duckdb.hbase.server`：gRPC 入口与装配
 
 ## 3. 依赖规则（硬约束）

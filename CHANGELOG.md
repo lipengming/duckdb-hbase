@@ -6,6 +6,10 @@
 
 ### Added
 
+- **M1 Gateway 骨架**：Maven 多模块（`gateway-api` / `gateway-core` / `adapter-native` / `gateway-server`）、`HBaseAccessAdapter` SPI + `ServiceLoader` 装配、Native HBase Adapter（Scan / BatchGet / 表结构 / 取消 / 健康检查）、gRPC 服务（Health / GetCapabilities / GetSchema / Cancel 已接通，Scan 与 BatchGet 待 Arrow IPC）。
+- **协议补充**：`CapabilityResponse`（11 项能力）、`SchemaRequest` / `ColumnSchema` / `SchemaResponse`、`CancelRequest` / `CancelResponse`、`HealthRequest` / `HealthResponse` 字段定稿（草案），并开启 `java_multiple_files`。
+- **文档**：`docs/gateway-design.md` 增加 M1 实现状态与包名偏差说明；`docs/protocol.md` 补齐新增消息字段表。
+
 - **M1 Extension 骨架**：`hbase_version()`、`hbase_connect()` / `hbase_disconnect()`（端点解析、会话级连接表）、`hbase_scan()` 参数解析与校验（远端 Provider 未接入前显式报错）。
 - **构建体系**：`CMakeLists.txt`、`Makefile`、`extension_config.cmake`、`vcpkg.json`；`duckdb`（v2.0.0）与 `extension-ci-tools` submodule。
 - **测试**：`test/sql/hbase_basic.test`（注册、幂等覆盖、非法端点、未注册连接、非法列描述等 10 个断言）。

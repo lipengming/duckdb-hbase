@@ -192,7 +192,23 @@ HBase RPC 超时由 `hbase.rpc_timeout_ms` 配置（示例值 30000）。重试�
 - TLS 证书、Gateway API 认证方式、审计日志字段的配置键。
 - Adapter SPI 版本号的形式与兼容窗口；断点续传所需的最后 RowKey 与稳定扫描语义。
 
-## 12. 相关文档
+## 12. M1 实现状态
+
+已落地的部分（`gateway/`）：
+
+| 模块 | 内容 |
+| --- | --- |
+| `gateway-api` | `HBaseAccessAdapter` SPI、`AdapterProvider`（ServiceLoader 发现）、`AdapterCapabilities`、`TableSchema`、`Row`/`ScanCursor`、`HBaseAccessException`；由 `protocol/proto` 生成 gRPC 桩 |
+| `gateway-core` | `GatewayConfig`（`.properties`）、`AdapterFactory`（按 `gateway.adapter` 装配）、`GatewayService` 编排 |
+| `adapter-native` | `NativeHBaseAdapter`：Scan / BatchGet / 表结构 / 取消 / 健康检查，基于 HBase Java Client 2.6 |
+| `gateway-server` | gRPC 服务：Health / GetCapabilities / GetSchema / Cancel 已接通；Scan 与 BatchGet 因 Arrow IPC 编码未完成返回 `UNIMPLEMENTED` |
+
+两点实现约定：
+
+1. **包名偏差**：Java 关键字 `native` 不能作为包名片段，因此 Native Adapter 的包为 `com.duckdb.hbase.adapter.hbase`，与 §6.2 中的 `adapter.native` 命名约定不同，模块名 `adapter-native` 保持不变。
+2. **装配方式**：`AdapterFactory` 通过 `ServiceLoader<AdapterProvider>` 发现实现（`META-INF/services`），`gateway-server` 对 `adapter-native` 只声明 runtime 依赖，编译期不引用具体 Adapter，满足“server 不直接引用 Adapter”的约束。
+
+## 13. 相关文档
 
 - [架构说明](architecture.md)、[Extension 设计](extension-design.md)
 - [缓存设计](cache-design.md)、[协议设计](protocol.md)、[Protobuf 定义](../protocol/proto/hbase_data_service.proto)

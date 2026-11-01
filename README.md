@@ -83,7 +83,7 @@ duckdb-hbase/
 
 ## 快速开始
 
-M1 进行中：Extension 骨架已可构建并通过 SQLLogicTest，远端扫描与 Java Gateway 尚未接入。
+M1 进行中：Extension 骨架已可构建并通过 SQLLogicTest；Gateway 骨架（Maven + gRPC + Native Adapter）已就位，Scan 的 Arrow IPC 编码与 Extension 侧 Provider 尚未接入。
 
 ```bash
 git clone --recurse-submodules https://github.com/lipengming/duckdb-hbase.git
@@ -97,6 +97,9 @@ GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
 
 # 手工体验（本地未签名扩展必须加 -unsigned）
 ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/hbase/hbase.duckdb_extension'; SELECT hbase_version();"
+
+# Gateway（需要 JDK 11 + Maven）
+mvn -q -f gateway/pom.xml -DskipTests package
 ```
 
 HBase 测试环境准备见 [环境准备清单](docs/environment.md)，实现进展见 [路线图](docs/roadmap.md)。
