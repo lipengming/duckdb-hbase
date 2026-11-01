@@ -89,7 +89,16 @@ message BatchGetRequest {
   int64 max_timestamp = 7;
 }
 
-// 流式数据批次：控制面元数据 + Arrow IPC 数据面。
+// 数据面批次编码。
+enum BatchEncoding {
+  BATCH_ENCODING_UNSPECIFIED = 0;
+  // M1 简化列式编码：UTF8 列 + 长度表（见 docs/protocol.md §3.4），无第三方依赖。
+  BATCH_ENCODING_UTF8_COLUMNS = 1;
+  // 目标格式：Arrow IPC stream（M2 切换）。
+  BATCH_ENCODING_ARROW_IPC = 2;
+}
+
+// 流式数据批次：控制面元数据 + 数据面载荷。
 message ArrowBatch {
   // Arrow IPC 数据载荷，承载实际列数据。
   bytes ipc_payload = 1;
@@ -99,6 +108,8 @@ message ArrowBatch {
   bool finished = 3;
   // 本批行数。
   uint64 row_count = 4;
+  // 载荷编码；M1 固定为 BATCH_ENCODING_UTF8_COLUMNS。
+  BatchEncoding encoding = 5;
 }
 
 // 能力协商请求。

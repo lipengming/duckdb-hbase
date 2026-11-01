@@ -41,11 +41,9 @@ public final class GatewayServer {
     HBaseAccessAdapter adapter = AdapterFactory.create(config);
     GatewayService service = new GatewayService(adapter);
 
+    HBaseDataServiceImpl serviceImpl = new HBaseDataServiceImpl(service);
     Server server =
-        ServerBuilder.forPort(config.port())
-            .addService(new HBaseDataServiceImpl(service))
-            .build()
-            .start();
+        ServerBuilder.forPort(config.port()).addService(serviceImpl).build().start();
 
     LOG.info(
         "DuckDB-HBase Gateway 已启动: {}:{} (adapter={})",
@@ -63,6 +61,7 @@ public final class GatewayServer {
                     if (!server.awaitTermination(10, TimeUnit.SECONDS)) {
                       server.shutdownNow();
                     }
+                    serviceImpl.close();
                     service.close();
                   } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();

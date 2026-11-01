@@ -1,14 +1,15 @@
 package com.duckdb.hbase.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.duckdb.hbase.core.AdapterFactory;
 import com.duckdb.hbase.core.GatewayConfig;
 import com.duckdb.hbase.core.GatewayService;
+import com.duckdb.hbase.protocol.v1.ArrowBatch;
 import com.duckdb.hbase.protocol.v1.CapabilityRequest;
 import com.duckdb.hbase.protocol.v1.CapabilityResponse;
+import com.duckdb.hbase.protocol.v1.ColumnRef;
 import com.duckdb.hbase.protocol.v1.HealthRequest;
 import com.duckdb.hbase.protocol.v1.HealthResponse;
 import com.duckdb.hbase.protocol.v1.HBaseDataServiceGrpc;
@@ -18,12 +19,12 @@ import com.duckdb.hbase.protocol.v1.SchemaResponse;
 import com.duckdb.hbase.spi.HBaseAccessAdapter;
 import com.duckdb.hbase.spi.HBaseAccessException;
 import com.duckdb.hbase.spi.HealthStatus;
+import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
+import java.util.Iterator;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
@@ -107,17 +108,32 @@ class GatewayServerTest {
   }
 
   @Test
-  void scanIsExplicitlyUnimplementedUntilArrowIpc() {
-    StatusRuntimeException error =
-        assertThrows(
-            StatusRuntimeException.class,
-            () ->
-                stub.scan(
-                        ScanRequest.newBuilder()
-                            .setNamespace("duckdb_test")
-                            .setTable("customer_profile")
-                            .build())
-                    .next());
-    assertEquals(Status.Code.UNIMPLEMENTED, error.getStatus().getCode());
+  void scanStreamsArrowBatches() {
+    Iterator<ArrowBatch> batches =
+        stub.scan(
+            ScanRequest.newBuilder()
+                .setNamespace("duckdb_test")
+                .setTable("customer_profile")
+                .setStartRow(ByteString.copyFromUtf8("r001"))
+                .setStopRow(ByteString.copyFromUtf8("r011"))
+                .setIncludeStart(true)
+                .addColumns(ColumnRef.newBuilder().setFamily("cf1").setQualifier("name").build())
+                .setBatchSize(4)
+                .build());
+
+    long rows = 0;
+    int payloads = 0;
+    while (batches.hasNext()) {
+      ArrowBatch batch = batches.next();
+      if (batch.getFinished()) {
+        break;
+      }
+      assertTrue(batch.getRowCount() > 0);
+      assertTrue(batch.getIpcPayload().size() > 0);
+      rows += batch.getRowCount();
+      payloads++;
+    }
+    assertEquals(10, rows, "r001..r010 共 10 行");
+    assertTrue(payloads >= 2, "batchSize=4 时至少应分 3 批");
   }
 }

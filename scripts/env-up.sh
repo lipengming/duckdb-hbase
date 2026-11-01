@@ -100,7 +100,10 @@ if [ "$START_GATEWAY" -eq 1 ]; then
     fi
 
     log "启动 Gateway：$GW_LOG"
-    nohup java -jar "$GW_JAR" "$GW_CONFIG" >"$GW_LOG" 2>&1 &
+    # Arrow 的 off-heap 分配器在 JDK 11+ 需要显式开放 java.nio
+    nohup java --add-opens=java.base/java.nio=ALL-UNNAMED \
+      -Dio.netty.tryReflectionSetAccessible=true \
+      -jar "$GW_JAR" "$GW_CONFIG" >"$GW_LOG" 2>&1 &
     echo $! >"$GW_PID_FILE"
 
     ready=0
