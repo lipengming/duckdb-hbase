@@ -26,7 +26,8 @@ DUCK_VER="2.0.0"
 FAILED=0
 
 usage() {
-  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+  # 打印文件头部连续注释行（自 shebang 之后到第一行非注释），避免写死行号
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
 }
 
 while [ $# -gt 0 ]; do
@@ -93,7 +94,7 @@ write_block() {                              # write_block <file> <marker> <cont
   else
     mkdir -p "$(dirname "$file")" && : > "$file"
   fi
-  printf '\n# >>> %s >>>\n%s\n# <<< %s <<<\n' "$marker" "$content" "$marker" >> "$file"
+  printf '# >>> %s >>>\n%s\n# <<< %s <<<\n' "$marker" "$content" "$marker" >> "$file"
 }
 
 printf 'DuckDB-HBase 开发环境安装\n  安装前缀：%s\n  平台：macOS %s（%s）\n  全局入口：%s\n' \
