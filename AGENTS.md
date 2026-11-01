@@ -9,9 +9,9 @@ DuckDB-HBase 是一个 DuckDB C++ Extension：通过统一 `RemoteScanProvider` 
 ## 2. 当前阶段（重要）
 
 - **设计阶段已完成**：`tech_v0.1.md` 是 V1.0 技术方案的唯一基线，共 13 章。
-- **M1 进行中**：`extension/` 已接入 gRPC Provider（`hbase_connect` 握手、`hbase_scan` 从 Gateway 取 Schema），能通过 `make release` 构建并跑 SQLLogicTest；数据面 Arrow IPC 待实现。
-- **Gateway 骨架已就位**：`gateway/` 有 Maven 多模块、Adapter SPI、Native Adapter 与 gRPC 服务；Health / GetCapabilities / GetSchema / Cancel 可用，Scan 与 BatchGet 因 Arrow IPC 编码未完成返回 `UNIMPLEMENTED`。
-- **Extension ↔ Gateway 已打通（握手 + Schema）**：`hbase_connect` 走 gRPC 握手（Health + GetCapabilities），`hbase_scan` 可从 Gateway 取 Schema 完成 Bind；**数据面（Arrow IPC）仍未实现**，查询会在执行阶段报 `Not implemented`。
+- **M1 进行中**：`extension/` 已接入 gRPC Provider 与 Arrow IPC 数据面（`hbase_connect` 握手、`hbase_scan` 流式扫描），能通过 `make release` 构建并通过集成测试。
+- **Gateway 已实现数据面**：Maven 多模块、Adapter SPI、Native Adapter、gRPC 服务；Health / Capabilities / Schema / Cancel / Scan / BatchGet 全部可用（Arrow IPC 流式返回）。
+- **Extension ↔ Gateway 数据面已打通**：`hbase_connect` 握手、`hbase_scan` 取 Schema + Arrow IPC 流式扫描（UTF8 列）、后台有界队列；缓存引擎（M3）与列类型映射尚未实现。
 - 任何实现工作都对应 `docs/roadmap.md` 中的 M1-M5 里程碑；没有对应里程碑的“顺手重构”不做。
 
 ## 3. 阅读顺序（按任务类型）

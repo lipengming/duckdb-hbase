@@ -6,6 +6,8 @@
 
 ### Added
 
+- **数据面（Arrow IPC）**：Gateway 侧 `ArrowIpcEncoder`（每批一条完整 IPC stream）+ `Scan`/`BatchGet` 流式返回；Extension 侧 `RemoteScanStream` 后台拉取 + `DecodeArrowIpc` 解码 + DataChunk 填充。
+- **集成测试**：`integration/`（1M 行客户交易宽表 mock、HBase 装载、pytest 端到端用例）。
 - **Extension 远端 Provider**：`IRemoteScanProvider` 抽象、gRPC 客户端（Health / GetCapabilities / GetSchema）、`hbase_connect` 建连即握手（失败不注册连接）、`hbase_scan` 从 Gateway 取 Schema 完成 Bind；数据面 Arrow IPC 待实现。
 - **构建**：vcpkg 引入 gRPC/Protobuf，CMake 自动从 `protocol/proto` 生成 C++ 桩。
 - **统一环境脚本**：`scripts/env-up.sh`（HBase + 夹具 + Gateway 一键启动，幂等）、`scripts/env-down.sh`（停止，可 `--keep-hbase`）、`scripts/env-check.sh`（只读体检：工具链 / HBase / 夹具 / Gateway / Extension）；`check-env.sh` 保留为兼容入口。

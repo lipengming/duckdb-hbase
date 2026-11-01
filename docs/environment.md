@@ -257,6 +257,25 @@ bash scripts/hbase-fixture.sh
 | 其中 `r0007` | 缺 `cf1:phone` | NULL / 缺列语义 |
 | 其中 `r0011` | `cf2:score` 有 ts=1000/2000 两版 | 版本与时间戳过滤 |
 | `duckdb_test:edge_cases` | 二进制 RowKey、中文 RowKey、空值、64KB 长值、200 列宽行 | RowKey 字节序、类型映射、宽行 |
+| `duckdb_test:customer_transaction` | 100 万行中文交易宽表（由 `integration/` 生成） | 单客户 10 万/50 万/100 万三档、时间跨度、缓存与分页 |
+
+### 7.1 客户交易宽表（集成测试规模数据集）
+
+`scripts/hbase-fixture.sh` 只建小夹具；规模数据集由独立包 `integration/` 生成并装载（幂等，可重复）：
+
+```bash
+cd integration
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e '.[test]'          # duckdb==2.0.0 仅端到端用例需要
+
+python -m duckdb_hbase_it all     # 生成 100 万行 -> 建表（16 预分区）-> 装载 -> 校验
+pytest -m dataplane               # 数据面用例（只依赖 HBase）
+pytest                            # 全量用例（Extension/Gateway 未就绪时自动 skip）
+```
+
+三档切换：`python -m duckdb_hbase_it all --hot-rows 500000 --force`（或 `1000000`）。
+数据、manifest 与编译缓存都在 `integration/.cache/`，可随时 `rm -rf integration/.cache` 重置。
+详见 [`integration/README.md`](../integration/README.md)。
 
 ## 8. 环境自检
 
@@ -314,7 +333,7 @@ rm -rf ~/tools
 | --- | --- |
 | Linux / CI 环境安装 | 目标发行版与是否允许 sudo；脚本目前只支持 macOS |
 | Windows（WSL2 或原生） | 是否有使用方 |
-| Python `duckdb` 包（`pip install duckdb==2.0.0`） | M2 Python 示例需要时再装，当前只装了 CLI |
+| Python `duckdb` 包（`pip install duckdb==2.0.0`） | `integration/` 端到端用例需要；本机 pip 访问 pypi 报证书错误时加 `--trusted-host pypi.org --trusted-host files.pythonhosted.org` |
 | HBase REST / Thrift 服务（`hbase rest start` / `hbase thrift start`） | M5 `adapter-rest` / `adapter-thrift` 需要时启用 |
 | 多版本 HBase 兼容矩阵（2.4.x 等） | M5 引入 Docker 后统一管理 |
 

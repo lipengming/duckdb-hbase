@@ -86,7 +86,7 @@ duckdb-hbase/
 
 ## 快速开始
 
-M1 进行中：Extension 骨架已可构建并通过 SQLLogicTest；Gateway 骨架（Maven + gRPC + Native Adapter）已就位，Scan 的 Arrow IPC 编码与 Extension 侧 Provider 尚未接入。
+M1 进行中：Extension ↔ Gateway 已打通（gRPC 握手 + Arrow IPC 流式扫描，UTF8 列）；缓存引擎、列类型映射与并行扫描尚未实现。
 
 ```bash
 git clone --recurse-submodules https://github.com/lipengming/duckdb-hbase.git

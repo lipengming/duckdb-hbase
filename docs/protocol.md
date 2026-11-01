@@ -71,7 +71,7 @@
 
 | 字段 | 编号 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `ipc_payload` | 1 | `bytes` | Arrow IPC 数据载荷，承载实际列数据 |
+| `ipc_payload` | 1 | `bytes` | Arrow IPC 数据载荷；**每个批次是一条完整的 IPC stream**（schema + 1 个 RecordBatch + EOS），客户端可逐批独立解码 |
 | `sequence_number` | 2 | `uint64` | 批次序号，用于顺序校验与续传 |
 | `finished` | 3 | `bool` | 是否为本次请求的最后一批 |
 | `row_count` | 4 | `uint64` | 本批行数 |
@@ -119,7 +119,11 @@
 | `HealthResponse` | `status` | 1 | `string` | `serving` / `not_serving` / `unknown` |
 | `HealthResponse` | `version` | 2 | `string` | Gateway 版本 |
 
-### 3.8 类型映射（待定）
+### 3.8 类型映射（M1 约定）
+
+M1 数据面统一使用 **UTF8 字符串列**：Cell 不存在写 NULL，存在则按 UTF-8 解码；`sql_type` 恒为 `VARCHAR`。`BIGINT`/`DOUBLE`/`TIMESTAMP` 等映射规则仍待定（TBD），需要业务侧的列类型声明，见 §3.9。
+
+### 3.9 类型映射（待定）
 
 `sql_type` 与 HBase 字节值的映射规则尚未定稿（TBD）：M1 先统一按 `VARCHAR` 处理，后续按 HBase `Bytes` 工具与业务约定补齐 `BIGINT`/`DOUBLE`/`BOOLEAN` 等映射。
 

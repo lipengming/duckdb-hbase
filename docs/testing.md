@@ -120,6 +120,20 @@
 - 数据规模分两档：功能数据集（可人工核对，行数固定）与规模数据集（用于性能与流式验证）。
 - 每轮集成测试前重建表并写入确定性数据，禁止依赖上一轮的残留状态。
 
+#### 客户交易宽表（规模数据集）
+
+`integration/` 包提供可重复生成的中文交易宽表夹具 `duckdb_test:customer_transaction`：
+总行数 100 万，单客户（热客户）支持 **10 万 / 50 万 / 100 万** 三档，时间跨度 30 天
+（默认 2025-09-01 ~ 2025-09-30，`+08:00`），3 个列族、15 列（收付款方 id+名称、时间、金额、
+币种、产品、物流单号、备注等），16 个按 `crc32(user_id) % 16` 预分区的 Region。
+
+- RowKey：`<salt:2hex><user_id>#<yyyymmdd>#<seq:6d>`。`user_id + date` 为主干，
+  `seq` 是同日唯一后缀（仅 `user_id + date` 一个月最多 31 个 RowKey，无法容纳单客户 10 万行）；
+  单客户前缀范围 `[<salt><user_id>#, <salt><user_id>$)` 与单日范围均可直接用于 Scan。
+- 生成/装载/校验由 `python -m duckdb_hbase_it` 完成，数据与 manifest 写入 `integration/.cache/`；
+  同一 seed 逐字节可复现，manifest 记录抽样行供测试逐单元格比对。
+- 空值语义：Cell 缺失读回 NULL，Cell 存在但空串读回 `''`，两者均有专门用例覆盖。
+
 ### 5.3 端到端断言
 
 | 场景 | 步骤 | 断言 |
@@ -131,6 +145,28 @@
 | 失效 | TTL 到期或 `hbase_cache_clear()` 后查询 | 重新访问远端；旧 Segment 不可读 |
 | 能力退化 | 关闭 Gateway 的 Batch Get 能力 | Partial Hit 退化为范围 Scan，结果仍正确 |
 | 取消 | 查询中途取消 | 远端 Scanner 与本地 Reader 均关闭，无残留文件 |
+
+### 5.4 可执行集成测试包（`integration/`）
+
+§4、§5.3 的用例已落成独立 Python 包，按「数据面」与「端到端」两层实现，用例编号可追溯：
+
+| 层 | 文件 | 用例编号 | 依赖 | 运行方式 |
+| --- | --- | --- | --- | --- |
+| 数据面 | `integration/tests/test_fixture_hbase.py` | IT-DATA-01 ~ 11 | HBase 2.6.x + JDK 11 | `pytest -m dataplane` |
+| 端到端 | `integration/tests/test_extension_scan.py` | IT-EXT-01 ~ 10 | + DuckDB + Extension + Gateway | `pytest -m extension` |
+| 缓存 | `integration/tests/test_extension_cache.py` | IT-CACHE-08 ~ 10 | 同上 | `pytest -m cache` |
+| 规模 | `integration/tests/test_scale_tiers.py` | IT-SCALE-11 | 同上 | `pytest -m scale` |
+| 错误路径 | `integration/tests/test_extension_errors.py` | IT-ERR-12 | 同上 | `pytest -m extension` |
+| 单测（生成器 / SQL 拼装） | `integration/tests/test_generator.py`、`test_sql_builder.py` | — | 无 | `pytest tests/test_generator.py tests/test_sql_builder.py` |
+
+执行约定：
+
+- 数据夹具（manifest + 已装载的表）缺失、Extension 未构建、Gateway 未启动、
+  `hbase_scan` 数据面未实现（M1 进行中）时，用例 **skip 并打印修复命令**，不误报为产品缺陷；
+  实现完成后自动开始执行，无需修改测试；
+- 全表计数、30 天逐日分页等大范围用例标记 `slow`，默认跳过，`--runslow` 开启；
+- `hbase_cache_stats()` 输出列仍是 TBD，缓存用例按列名关键字识别计数列，识别不到时 skip；
+- 详细的数据模型、三档切换、CLI、环境变量与已知限制见 [`integration/README.md`](../integration/README.md)。
 
 ## 6. 正确性测试重点
 

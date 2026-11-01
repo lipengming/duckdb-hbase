@@ -31,7 +31,8 @@
 - [x] 实现 Extension Registry 与 `hbase_connect()` / `hbase_disconnect()`（含端点解析、会话级连接表、fallible 声明）
 - [x] `hbase_scan()` 参数解析与校验
 - [x] `IRemoteScanProvider` + gRPC 客户端（Health / GetCapabilities / GetSchema），`hbase_connect` 建连即握手
-- [ ] `hbase_scan()` 数据面：Arrow IPC 解码与 DataChunk 填充
+- [x] `hbase_scan()` 数据面：Arrow IPC 解码、后台流式拉取与 DataChunk 填充（UTF8 列）
+- [ ] 列类型映射（BIGINT/DOUBLE/TIMESTAMP）与多版本展开
 - [ ] 实现 `hbase_scan()` Table Function 的 Bind、Init、Global/Local State 与并行 Scan 骨架
 - [ ] 实现 Projection Pushdown 与 Filter Pushdown 的最小可用路径（Required Columns 与 Output Columns 分离）
 - [ ] 实现 `hbase_columns()` / `hbase_tables()` 的 Schema 获取

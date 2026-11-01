@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "duckdb-hbase-integration"
+version = "0.1.0"
+description = "DuckDB-HBase 集成测试包：客户交易宽表 mock 数据、HBase 装载与端到端测试用例"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    # 必须与 extension/ 构建时锁定的 DuckDB 版本一致（见 docs/environment.md）
+    "duckdb==2.0.0",
+]
+
+[project.scripts]
+dh-it = "duckdb_hbase_it.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+duckdb_hbase_it = ["java/*.java"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "dataplane: 只依赖 HBase 客户端的夹具/数据校验用例（不需要 DuckDB 与 Extension）",
+    "extension: 需要 DuckDB + hbase.duckdb_extension 的端到端用例",
+    "cache: 缓存命中/补列/失效用例（需要 Extension 缓存能力）",
+    "scale: 10 万/50 万/100 万三档单客户规模用例",
+    "slow: 需要全量或大范围扫描，默认跳过（加 --runslow 执行）",
+]

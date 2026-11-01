@@ -193,6 +193,13 @@ VARCHAR 入参按 UTF-8 转字节，BLOB 入参保持原始字节；缓存覆盖
 
 > 详见 [技术方案 §7.5](../tech_v0.1.md)、[§7.6](../tech_v0.1.md)、[§8.3](../tech_v0.1.md)。
 
+## 6.1 扫描执行实现（M1）
+
+- `RemoteScanStream`：后台线程调用 `Provider::Scan`，把 Arrow 批推入**有界队列**（默认 2 批），主线程按需消费，内存不随结果集增长。
+- `DecodeArrowIpc`：解码单批 Arrow IPC（UTF8 列 + validity），映射为字符串列；`DataChunk` 用 `FlatVector` + `StringVector::AddString` 填充。
+- 单查询串行消费（`MaxThreads()=1`）；并行扫描在 M2 按 RowKey 区间切分。
+- 取消：查询中止时 `RemoteScanStream::Close()` 通知工作线程退出；gRPC 侧的 `Cancel` 在 M2 接入（当前依赖连接关闭）。
+
 ## 7. Gateway 可用性与连接生命周期
 
 Extension 与 Gateway 是两个独立进程，Gateway 不可用时的行为必须明确，否则会出现“启动顺序依赖”和难以恢复的失败。
