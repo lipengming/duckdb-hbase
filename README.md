@@ -93,7 +93,7 @@ cd duckdb-hbase
 GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
 
 # 运行本仓库的 SQLLogicTest
-./build/release/test/unittest "test/sql/hbase_basic.test"
+./build/release/test/unittest "*hbase*"
 
 # 手工体验（本地未签名扩展必须加 -unsigned）
 ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/hbase/hbase.duckdb_extension'; SELECT hbase_version();"

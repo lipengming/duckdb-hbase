@@ -12,11 +12,22 @@
 
 ```text
 extension/
-├── include/          # 对外接口头文件（scan/ cache/ storage/ provider/ common/）
-├── src/              # 实现（extension/ sql/ scan/ cache/ storage/ provider/ catalog/ common/）
-├── test/             # 单元测试、SQL 测试、集成测试
-└── CMakeLists.txt
+├── CMakeLists.txt    # 扩展构建入口（由仓库根的 extension_config.cmake 以 SOURCE_DIR 引入）
+├── src/
+│   ├── include/      # 对外接口头文件（common/ sql/ scan/ cache/ storage/ provider/）
+│   ├── common/       # 配置、异常、日志、RowKey
+│   ├── sql/          # Table Function / Scalar Function
+│   ├── scan/         # 计划、执行、并行、投影与谓词
+│   ├── cache/        # 命中判定、覆盖索引、合并、失效
+│   ├── storage/      # Parquet、内存、元数据
+│   ├── provider/     # RemoteScanProvider 及协议客户端
+│   └── catalog/      # Schema、列映射、类型映射
+└── test/
+    ├── sql/          # SQLLogicTest
+    └── unit/         # C++ 单元测试（M1 后）
 ```
+
+构建始终在**仓库根**执行（`make release`），`extension/` 不是独立 CMake 工程。
 
 ## 当前状态
 

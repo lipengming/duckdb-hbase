@@ -18,6 +18,9 @@ head_() { printf '\n%s\n' "$1"; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# macOS 不自带 timeout：有 gtimeout（coreutils）则限时，否则直接执行
+tmo() { local s=$1; shift; if have gtimeout; then gtimeout "$s" "$@"; else "$@"; fi; }
+
 # ---------- 基础工具链 ----------
 head_ "[1/6] 基础工具链"
 
@@ -100,8 +103,8 @@ head_ "[4/6] DuckDB CLI（运行 Extension）"
 if have duckdb; then
   dv=$(duckdb --version 2>/dev/null | awk '{print $1}')
   case "$dv" in
-    v2.0.*|2.0.*) ok "duckdb $dv（与构建基线一致）" ;;
-    *) warn "duckdb $dv；扩展构建基线为 v2.0.0，版本不一致会导致 LOAD 失败" ;;
+    v2.0.*|2.0.*) ok "duckdb ${dv}（与构建基线一致）" ;;
+    *) warn "duckdb ${dv}；扩展构建基线为 v2.0.0，版本不一致会导致 LOAD 失败" ;;
   esac
 else
   bad "缺少 duckdb CLI（需要 v2.0.0）"
@@ -112,12 +115,12 @@ head_ "[5/6] HBase 测试环境"
 
 if have hbase; then
   ok "hbase 命令可用：$(command -v hbase)"
-  if timeout 20 hbase version >/dev/null 2>&1; then
+  if tmo 20 hbase version >/dev/null 2>&1; then
     ok "hbase version 可执行"
   else
     warn "hbase version 执行失败（检查 JAVA_HOME 与 HBASE_HOME）"
   fi
-  if timeout 30 hbase shell -n <<< "status 'summary'" >/dev/null 2>&1; then
+  if tmo 30 hbase shell -n <<< "status 'summary'" >/dev/null 2>&1; then
     ok "HBase 集群可连接（hbase shell status 成功）"
   else
     warn "HBase 集群未启动或不可连接：先执行 start-hbase.sh"

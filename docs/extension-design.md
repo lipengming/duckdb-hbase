@@ -193,6 +193,25 @@ VARCHAR 入参按 UTF-8 转字节，BLOB 入参保持原始字节；缓存覆盖
 
 > 详见 [技术方案 §7.5](../tech_v0.1.md)、[§7.6](../tech_v0.1.md)、[§8.3](../tech_v0.1.md)。
 
+## 7. Gateway 可用性与连接生命周期
+
+Extension 与 Gateway 是两个独立进程，Gateway 不可用时的行为必须明确，否则会出现“启动顺序依赖”和难以恢复的失败。
+
+| 阶段 | 是否访问 Gateway | 失败行为 | 原因 |
+| --- | --- | --- | --- |
+| `LOAD hbase` | 否 | 不失败 | LOAD 失败会被 DuckDB 缓存，Gateway 后启动将无法恢复；同进程可能注册多个 Gateway |
+| `hbase_connect()` | 是 | 抛错并**不注册**该连接 | 建连即握手：`GetCapabilities` + `Health`（带 deadline 与有限重试），不可用则明确告知用户 |
+| 查询（`hbase_scan` 等） | 是 | 快速失败，不静默降级 | 已有连接在 Gateway 重启后，允许**一次**重连尝试；仍失败则报错并提示重新 `hbase_connect` |
+| `LOAD` 之后的空闲期 | 否 | —— | 不做后台心跳，避免无谓连接与线程 |
+
+因此，**“Extension 启动时探测 Gateway 并拒绝加载”是明确不采用的做法**：
+
+1. 启动顺序不该成为约束：用户的 DuckDB 脚本可能先 `LOAD`，Gateway 稍后启动。
+2. LOAD 失败是粘性的：DuckDB 会缓存加载结果，用户只能重启进程。
+3. 一个 DuckDB 进程可以同时连接多个 Gateway，“全局不可用”没有意义；可用性是**按连接**判断的。
+
+对用户的可见语义是：`LOAD` 永远成功；`hbase_connect` 在 Gateway 不可用时立即报错（错误信息包含 endpoint 与原因）；已建立的连接在网关故障后，后续查询报错而不是返回空结果。
+
 ## 7. 关键类关系
 
 ```text

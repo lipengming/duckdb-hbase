@@ -33,7 +33,7 @@
 - [ ] 实现 `hbase_scan()` Table Function 的 Bind、Init、Global/Local State 与并行 Scan 骨架
 - [ ] 实现 Projection Pushdown 与 Filter Pushdown 的最小可用路径（Required Columns 与 Output Columns 分离）
 - [ ] 实现 `hbase_columns()` / `hbase_tables()` 的 Schema 获取
-- [ ] 搭建 Java Gateway（Maven）与 gRPC 服务端骨架
+- [x] 搭建 Java Gateway（Maven 多模块）与 gRPC 服务端骨架（Health/Capabilities/Schema/Cancel 已接通）
 - [ ] 实现 Native HBase Adapter 的 `scan()`，使用 HBase Java Client 2.x
 - [ ] 定义并实现 Arrow IPC Streaming 的批次编码与解码
 - [ ] 实现 `DataChunkConverter`（Arrow → DuckDB DataChunk）

@@ -37,9 +37,8 @@ duckdb-hbase/
 ├── CONTRIBUTING.md           # 协作流程、分支与 PR 规范
 ├── CHANGELOG.md              # 版本变更记录
 ├── tech_v0.1.md              # 设计基线（V1.0 技术方案，权威）
-├── CMakeLists.txt            # Extension 构建入口
 ├── Makefile                  # 封装 extension-ci-tools 的构建/测试目标
-├── extension_config.cmake    # 告诉 DuckDB 构建哪些扩展
+├── extension_config.cmake    # 告诉 DuckDB 构建哪个扩展（SOURCE_DIR=extension/）
 ├── vcpkg.json                # C++ 依赖清单（当前为空，接 gRPC 时再补）
 ├── docs/                     # 工程文档（由设计基线派生）
 │   ├── architecture.md       # 分层、依赖方向、模块边界
@@ -52,9 +51,10 @@ duckdb-hbase/
 │   ├── testing.md            # 测试策略
 │   ├── roadmap.md            # M1-M5 里程碑
 │   └── coding-standards.md   # 编码规范（硬约束）
-├── src/                      # Extension 源码（include/ + common/ + sql/）
-├── test/sql/                 # SQLLogicTest
-├── extension/                # C++ Extension 说明（实际源码在 src/、构建在仓库根）
+├── extension/                # C++ Extension（独立构建单元）
+│   ├── CMakeLists.txt        # 扩展构建入口
+│   ├── src/                  # 源码：include/ + common/ + sql/
+│   └── test/sql/             # SQLLogicTest
 ├── gateway/                  # Java Gateway（Maven 多模块：api/core/adapter-native/server）
 ├── protocol/proto/           # Protobuf 定义
 ├── scripts/                  # 环境自检、HBase 夹具、构建脚本
@@ -92,7 +92,7 @@ duckdb-hbase/
 git status && git log --oneline -10
 
 # 全文检索（优先使用工具而非 cat）
-rg "hbase_scan" docs/ src/ tech_v0.1.md
+rg "hbase_scan" docs/ extension/src/ tech_v0.1.md
 
 # 拉取 DuckDB / extension-ci-tools 子模块（首次 clone 必须）
 git submodule update --init --recursive
@@ -101,7 +101,7 @@ git submodule update --init --recursive
 GEN=ninja EXT_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5" make release
 
 # 运行 SQLLogicTest（可用路径过滤，只跑本仓库测试）
-./build/release/test/unittest "test/sql/hbase_basic.test"
+./build/release/test/unittest "*hbase*"
 
 # 手工验证：-unsigned 是本地未签名扩展必须的
 ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/hbase/hbase.duckdb_extension'; SELECT hbase_version();"

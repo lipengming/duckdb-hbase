@@ -30,7 +30,7 @@ namespace common {}     // 配置、错误、日志、RowKey、类型工具
 }
 ```
 
-- 头文件放在 `extension/include/<domain>/`，实现放在 `extension/src/<domain>/`。
+- 头文件放在 `extension/src/include/<domain>/`，实现放在 `extension/src/<domain>/`。
 - 公开头文件只暴露接口，不暴露实现细节与第三方类型（PIMPL 或前向声明）。
 - C++ 头文件统一使用 `#pragma once`。
 

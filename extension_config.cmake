@@ -2,6 +2,6 @@
 
 # Extension from this repo
 duckdb_extension_load(hbase
-    SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}
+    SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/extension
     LOAD_TESTS
 )
