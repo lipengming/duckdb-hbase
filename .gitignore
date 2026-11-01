@@ -29,7 +29,6 @@ CMakeFiles/
 CMakeUserPresets.json
 cmake_install.cmake
 CTestTestfile.cmake
-Makefile
 compile_commands.json
 *.o
 *.obj
@@ -49,8 +48,7 @@ compile_commands.json
 *.profdata
 
 # ---- DuckDB Extension 构建产物与依赖 ----
-duckdb/
-extension-ci-tools/
+# 注意：duckdb/ 与 extension-ci-tools/ 是 git submodule，不能忽略（见 .gitmodules）
 third_party/
 *.duckdb_extension
 *.duckdb_extension.gz
