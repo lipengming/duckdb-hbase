@@ -109,6 +109,83 @@ bool GrpcProvider::HealthCheck() {
     }
 }
 
+void GrpcProvider::Scan(const RemoteScanRequest& request, const RemoteBatchCallback& callback) {
+    impl_->EnsureStub();
+
+    v1::ScanRequest proto_request;
+    proto_request.set_request_id(request.request_id);
+    proto_request.set_namespace_(request.namespace_name);
+    proto_request.set_table(request.table);
+    if (!request.start_row.empty()) {
+        proto_request.set_start_row(request.start_row);
+        proto_request.set_include_start(request.include_start);
+    }
+    if (!request.stop_row.empty()) {
+        proto_request.set_stop_row(request.stop_row);
+        proto_request.set_include_stop(request.include_stop);
+    }
+    for (auto& column : request.columns) {
+        auto* ref = proto_request.add_columns();
+        ref->set_family(column.family);
+        ref->set_qualifier(column.qualifier);
+    }
+    proto_request.set_max_versions(request.max_versions);
+    proto_request.set_min_timestamp(request.timestamp_min);
+    proto_request.set_max_timestamp(request.timestamp_max);
+    proto_request.set_batch_size(request.batch_size);
+
+    auto context = impl_->NewContext();
+    auto reader = impl_->stub->Scan(context.get(), proto_request);
+
+    v1::ArrowBatch batch;
+    while (reader->Read(&batch)) {
+        callback(batch.ipc_payload(), static_cast<int64_t>(batch.row_count()), batch.finished());
+        if (batch.finished()) {
+            return;
+        }
+    }
+    auto status = reader->Finish();
+    if (!status.ok()) {
+        throw IOException("Gateway Scan 失败 (%s): %s", impl_->target, status.error_message());
+    }
+    callback(string(), 0, true);
+}
+
+void GrpcProvider::BatchGet(const RemoteGetRequest& request, const RemoteBatchCallback& callback) {
+    impl_->EnsureStub();
+
+    v1::BatchGetRequest proto_request;
+    proto_request.set_request_id(request.request_id);
+    proto_request.set_namespace_(request.namespace_name);
+    proto_request.set_table(request.table);
+    for (auto& rowkey : request.rowkeys) {
+        proto_request.add_rowkeys(rowkey);
+    }
+    for (auto& column : request.columns) {
+        auto* ref = proto_request.add_columns();
+        ref->set_family(column.family);
+        ref->set_qualifier(column.qualifier);
+    }
+    proto_request.set_min_timestamp(request.timestamp_min);
+    proto_request.set_max_timestamp(request.timestamp_max);
+
+    auto context = impl_->NewContext();
+    auto reader = impl_->stub->BatchGet(context.get(), proto_request);
+
+    v1::ArrowBatch batch;
+    while (reader->Read(&batch)) {
+        callback(batch.ipc_payload(), static_cast<int64_t>(batch.row_count()), batch.finished());
+        if (batch.finished()) {
+            return;
+        }
+    }
+    auto status = reader->Finish();
+    if (!status.ok()) {
+        throw IOException("Gateway BatchGet 失败 (%s): %s", impl_->target, status.error_message());
+    }
+    callback(string(), 0, true);
+}
+
 string GrpcProvider::Name() const {
     return "grpc";
 }

@@ -2,6 +2,9 @@
 
 #include "duckdb.hpp"
 
+#include <cstdint>
+#include <functional>
+
 namespace duckdb {
 namespace hbase {
 
@@ -33,24 +36,57 @@ struct RemoteSchema {
     vector<RemoteColumn> columns;
 };
 
+//! 扫描请求。RowKey 以二进制字符串承载（std::string 可容纳任意字节）。
+struct RemoteScanRequest {
+    string namespace_name;
+    string table;
+    string start_row;
+    string stop_row;
+    bool include_start = true;
+    bool include_stop = false;
+    vector<RemoteColumn> columns;
+    int32_t max_versions = 1;
+    int64_t timestamp_min = 0;
+    int64_t timestamp_max = 0;
+    int32_t batch_size = 0;
+    string request_id;
+};
+
+//! 批量 Get 请求（部分缓存命中补列用）。
+struct RemoteGetRequest {
+    string namespace_name;
+    string table;
+    vector<string> rowkeys;
+    vector<RemoteColumn> columns;
+    int64_t timestamp_min = 0;
+    int64_t timestamp_max = 0;
+    string request_id;
+};
+
+//! 数据面回调：每个 ArrowBatch 触发一次。finished=true 表示流结束（payload 为空）。
+using RemoteBatchCallback =
+    std::function<void(const string& ipc_payload, int64_t row_count, bool finished)>;
+
 //! 远端扫描 Provider：Extension 唯一的远端依赖边界（方案 §3.3）。
 //!
 //! 约定：
-//! - scan 不得 include 本文件之外的任何具体 Provider 实现头文件；
-//! - 所有方法在失败时抛 duckdb::IOException / duckdb::InvalidInputException；
-//! - 实现必须线程安全，可被多个 Scan 线程并发调用。
+//! - scan/cache 模块不得 include 具体 Provider 实现头文件；
+//! - 所有方法失败时抛 duckdb::IOException / duckdb::InvalidInputException；
+//! - Scan/BatchGet 为阻塞式回调：实现按批回调，禁止一次性缓冲全量结果；
+//! - 实现必须线程安全，可被多个查询并发调用。
 class IRemoteScanProvider {
 public:
     virtual ~IRemoteScanProvider() = default;
 
-    //! 连接建立后协商能力；失败抛异常。
     virtual ProviderCapabilities GetCapabilities() = 0;
-
-    //! 获取表结构（列族 + 已知 qualifier + 逻辑类型）。
     virtual RemoteSchema GetSchema(const string& namespace_name, const string& table) = 0;
-
-    //! 健康检查；不应抛异常，不可用时返回 false。
     virtual bool HealthCheck() = 0;
+
+    //! 范围扫描，按批回调 Arrow IPC 载荷。
+    virtual void Scan(const RemoteScanRequest& request, const RemoteBatchCallback& callback) = 0;
+
+    //! 按 RowKey 批量读取，按批回调 Arrow IPC 载荷。
+    virtual void BatchGet(const RemoteGetRequest& request, const RemoteBatchCallback& callback) = 0;
 
     //! Provider 类型名，例如 "grpc"。
     virtual string Name() const = 0;

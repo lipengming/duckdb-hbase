@@ -46,6 +46,8 @@ set(EXTENSION_SOURCES
     src/common/connection_registry.cpp
     src/provider/grpc_provider.cpp
     src/provider/provider_factory.cpp
+    src/scan/columnar_batch_decoder.cpp
+    src/scan/remote_scan_stream.cpp
     src/sql/hbase_connect_function.cpp
     src/sql/hbase_scan_function.cpp
     ${GRPC_GEN_SRCS}

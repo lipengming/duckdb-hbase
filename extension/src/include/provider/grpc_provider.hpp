@@ -19,6 +19,8 @@ public:
     ProviderCapabilities GetCapabilities() override;
     RemoteSchema GetSchema(const string& namespace_name, const string& table) override;
     bool HealthCheck() override;
+    void Scan(const RemoteScanRequest& request, const RemoteBatchCallback& callback) override;
+    void BatchGet(const RemoteGetRequest& request, const RemoteBatchCallback& callback) override;
     string Name() const override;
     void Close() override;
 
