@@ -3,78 +3,93 @@
 > 适用版本：M1（Extension ↔ Gateway 数据面已打通，缓存尚未实现）。
 > 环境准备见 [开发环境说明](environment.md)，完整 SQL API 见 [用户指南](user-guide.md)。
 
-## 1. 前置条件
+## 1. 先分清角色：你需要做什么
 
-| 组件 | 要求 | 检查命令 |
+| 角色 | 要做的事 | 需要看哪里 |
 | --- | --- | --- |
-| HBase | 2.6.x 已启动 | `hbase shell -n <<< "status 'summary'"` |
-| Gateway | 已启动，监听 18080 | `bash scripts/env-check.sh` |
-| DuckDB CLI | v2.0.0（与扩展构建版本一致） | `duckdb --version` |
-| Extension | `build/release/extension/hbase/hbase.duckdb_extension` | 见下 |
+| **Extension 用户**（分析师 / 数据工程师） | 装 DuckDB + 装扩展 + 拿到 Gateway 地址 → 写 SQL | 本文 §2 |
+| **平台 / 运维**（部署 Gateway 的人） | 部署 Gateway、连 HBase、配 TLS/认证、提供 endpoint | [部署指南](deployment-guide.md) |
+| **开发者**（改本仓库代码） | 构建扩展、起本地 HBase/Gateway、跑测试 | 本文 §3、[环境说明](environment.md) |
 
-一次性拉起全部依赖（HBase + 夹具 + Gateway）：
+终端用户**不需要**执行 `scripts/env-up.sh`、不需要装 HBase、不需要编译扩展；
+`scripts/env-up.sh` 是本仓库开发者的“一键起本地联调环境”脚本。
 
-```bash
-cd /path/to/duckdb-hbase
-bash scripts/env-up.sh
-```
+## 2. 终端用户：三步查询
 
-首次或改动代码后需要重新构建扩展（首次约 15-30 分钟）：
+### 前提
 
-```bash
-VCPKG_TOOLCHAIN_PATH="$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake" \
-OVERRIDE_GIT_DESCRIBE=v2.0.0 GEN=ninja make release
-```
+| 项 | 说明 |
+| --- | --- |
+| DuckDB | 与扩展匹配的版本（当前基线 v2.0.0） |
+| Extension | 已安装到 DuckDB（见第 1 步） |
+| Gateway 地址 | 由运维提供，例如 `grpc://hbase-gw.internal:18080` |
+| 权限 | 对目标 HBase namespace / 表的读权限 |
 
-> `OVERRIDE_GIT_DESCRIBE=v2.0.0` 用来让扩展的 DuckDB 版本串与官方 v2.0.0 CLI 对齐；
-> 不加会出现 “built specifically for DuckDB version …” 的加载失败。
+### 第 1 步：安装并加载扩展
 
-## 2. 三步查询
-
-### 第 1 步：启动 DuckDB CLI（必须加 `-unsigned`）
-
-本地构建的扩展没有签名，DuckDB 默认拒绝加载：
-
-```bash
-duckdb -unsigned
-```
-
-> macOS 上 `LOAD` 必须用**绝对路径**，否则会报 `relative path not allowed in hardened program`。
-
-### 第 2 步：加载扩展并注册连接
+扩展发布到 Extension Repository 后（M5 目标），用户侧是标准流程：
 
 ```sql
-LOAD '/Users/cubber.li/code/duckdb-hbase/build/release/extension/hbase/hbase.duckdb_extension';
+INSTALL hbase FROM community;
+LOAD hbase;
+```
 
+当前 M1 阶段扩展尚未发布，使用运维/开发者提供的扩展文件：
+
+```bash
+duckdb -unsigned   # 本地构建产物未签名，必须加 -unsigned
+```
+
+```sql
+LOAD '/opt/duckdb/extensions/hbase.duckdb_extension';   -- 必须是绝对路径
+```
+
+### 第 2 步：注册连接
+
+```sql
 SELECT hbase_connect('prod', 'grpc://127.0.0.1:18080');
 -- true
 ```
 
-`hbase_connect` 会做一次握手（Health + GetCapabilities）：Gateway 没起时直接报
-`Gateway 不可用`，并且不会注册这个连接。
+`hbase_connect` 会做一次握手（Health + GetCapabilities）：Gateway 不可用时立即报错，
+不会留下半可用状态。连接是**会话级**的，重开 CLI 需要重新 `hbase_connect`。
 
 ### 第 3 步：查询
 
 ```sql
-SELECT "cf1:name", "cf2:age"
+SELECT "cf1:name", "cf2:age"::INTEGER AS age
 FROM hbase_scan(
     'prod', 'duckdb_test', 'customer_profile',
     start_row := 'r001',
-    stop_row  := 'r011',
-    columns   := ['cf1:name', 'cf2:age']
-);
+    stop_row  := 'r011',                    -- 开区间
+    columns   := ['cf1:name','cf2:age']     -- 必须显式指定
+)
+WHERE "cf2:age"::INTEGER > 40;
 ```
 
-```
-┌────────────┬─────────┐
-│ cf1:name   │ cf2:age │
-│  varchar   │ varchar │
-├────────────┼─────────┤
-│ user-001   │ 21      │
-│ ...
+## 3. 开发者 / 自建环境
+
+只想在本机跑通链路时：
+
+```bash
+cd /path/to/duckdb-hbase
+
+# 1) 拉起 HBase + 测试夹具 + Gateway（幂等）
+bash scripts/env-up.sh
+
+# 2) 构建扩展（首次约 15-30 分钟）
+VCPKG_TOOLCHAIN_PATH="$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+OVERRIDE_GIT_DESCRIBE=v2.0.0 GEN=ninja make release
+
+# 3) 环境体检 / 停止
+bash scripts/env-check.sh
+bash scripts/env-down.sh
 ```
 
-## 3. `hbase_scan` 参数
+> `OVERRIDE_GIT_DESCRIBE=v2.0.0` 让扩展的 DuckDB 版本串与官方 v2.0.0 CLI 对齐；
+> 不加会报 “built specifically for DuckDB version …”。
+
+## 4. `hbase_scan` 参数
 
 ```sql
 hbase_scan(
@@ -93,36 +108,30 @@ hbase_scan(
 
 要点：
 
-- **必须显式给 `columns`**。HBase 没有固定 schema，Gateway 只能拿到列族；不传 `columns` 会退化成整列族，列名不带 qualifier，通常不是你想要的结果。
+- **必须显式给 `columns`**。HBase 没有固定 schema，Gateway 只能拿到列族；不传 `columns` 会退化成整列族，列名不带 qualifier。
 - 列名一律用 `"family:qualifier"` 双引号引用（因为含冒号）。
-- 所有列当前都是 `VARCHAR`（类型映射待定），数值需要自己 `CAST`：
-  ```sql
-  SELECT "cf2:age"::INTEGER AS age FROM hbase_scan(...);
-  ```
+- 所有列当前都是 `VARCHAR`（类型映射待定），数值需要 `CAST`。
 
-## 4. 常用示例
+## 5. 常用示例
 
 ```sql
--- 计行数 / 聚合
+-- 计行数
 SELECT count(*) FROM hbase_scan('prod','duckdb_test','customer_profile',
                                 columns := ['cf1:name']);
 
-SELECT "cf1:city", count(*)
-FROM hbase_scan('prod','duckdb_test','customer_profile', columns := ['cf2:city'])
+-- 聚合
+SELECT "cf1:city", count(*) AS n
+FROM hbase_scan('prod','duckdb_test','customer_profile', columns := ['cf1:city'])
 GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
 
--- 过滤（在 DuckDB 侧执行）
-SELECT "cf1:name", "cf2:age"
+-- 范围 + 过滤
+SELECT "cf1:name", "cf2:age"::INTEGER AS age
 FROM hbase_scan('prod','duckdb_test','customer_profile',
+                start_row := 'r001', stop_row := 'r050',
                 columns := ['cf1:name','cf2:age'])
 WHERE "cf2:age"::INTEGER > 40;
 
--- 只取前 N 行（注意：LIMIT 不会减少远端扫描，HBase 仍按范围扫描）
-SELECT * FROM hbase_scan('prod','duckdb_test','customer_profile',
-                         start_row := 'r001', stop_row := 'r011',
-                         columns := ['cf1:name']) LIMIT 3;
-
--- 时间戳过滤（min/max_timestamp 已透传到 HBase）
+-- 时间戳过滤
 SELECT * FROM hbase_scan('prod','duckdb_test','customer_profile',
                          columns := ['cf2:score'], timestamp_min := 1000, timestamp_max := 2000);
 
@@ -130,7 +139,7 @@ SELECT * FROM hbase_scan('prod','duckdb_test','customer_profile',
 SELECT hbase_disconnect('prod');   -- true 表示删除成功
 ```
 
-## 5. 一次执行（脚本 / CI）
+## 6. 脚本 / CI 方式
 
 ```bash
 duckdb -unsigned -c "
@@ -140,47 +149,28 @@ SELECT count(*) FROM hbase_scan('prod','duckdb_test','customer_profile', columns
 "
 ```
 
-SQL 文件方式：
-
-```bash
-cat > /tmp/q.sql <<'SQL'
-LOAD '/abs/path/hbase.duckdb_extension';
-SELECT hbase_connect('prod','grpc://127.0.0.1:18080');
-SELECT "cf1:name" FROM hbase_scan('prod','duckdb_test','customer_profile',
-                                  start_row := 'r001', stop_row := 'r005',
-                                  columns := ['cf1:name']);
-SQL
-duckdb -unsigned -f /tmp/q.sql
-```
-
-## 6. 已知限制（M1）
+## 7. 已知限制（M1）
 
 | 限制 | 说明 / 规避 |
 | --- | --- |
-| 缓存未实现 | `cache := true` 参数被忽略，每次查询都访问 HBase（M3 实现） |
+| 扩展未发布 | 需要 `LOAD` 本地文件 + `-unsigned`；发布到 community extensions 是 M5 |
+| 依赖 Gateway | Extension 不直连 HBase，必须由运维提供 Gateway 端点 |
+| 缓存未实现 | `cache := true` 被忽略，每次查询都访问 HBase（M3） |
 | 只有字符串类型 | 数值/时间需要 `CAST` |
 | 单线程扫描 | 一个查询一个远端流；并行扫描在 M2 |
-| 无 Catalog | 必须显式传 namespace / table，不支持 `SELECT * FROM hbase.table` |
+| 无 Catalog | 必须显式传 namespace / table |
 | 只读 | 不支持写入、DDL |
-| **按列扫描会跳过没有匹配列的行** | HBase 语义：只请求 `ext:remark` 时，remark 缺失的行不会返回。需要 NULL 语义时，**同时请求一个必然存在的列**（例如 `party:payer_id`），或先物化：`CREATE TABLE t AS SELECT ...` |
-| 多版本未展开 | `max_versions` 会传给 HBase，但每个 cell 只保留最新版本，不会展开成多行 |
-| **`IS NULL` / `FILTER` 结果不稳定** | 当前版本在扫描结果上直接 `col IS NULL` + `FILTER`/`DISTINCT` 会误判。**规避：先 `CREATE TABLE t AS SELECT ...` 再查 `t`**（已验证语义正确） |
+| 多版本未展开 | `max_versions` 传给 HBase，但每个 cell 只保留最新版本 |
+| 按列扫描跳过无匹配行 | 只请求 `ext:remark` 时，remark 缺失的行不会返回；需要 NULL 语义时同时请求一个必然存在的列，或先 `CREATE TABLE t AS SELECT ...` |
+| `IS NULL` / `FILTER` 不稳定 | 先 `CREATE TABLE t AS SELECT ...` 再查 `t`（已验证语义正确） |
 
-## 7. 排错
+## 8. 排错
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
 | `dlopen(... relative path not allowed ...)` | macOS 安全策略 | `LOAD` 用绝对路径 |
 | `signature is either missing or invalid` | 扩展未签名 | `duckdb -unsigned` |
 | `built specifically for DuckDB version ...` | 扩展与 CLI 版本不一致 | 用同一 v2.0.0 构建，构建时加 `OVERRIDE_GIT_DESCRIBE=v2.0.0` |
-| `hbase_connect: Gateway 不可用` | Gateway 未启动 | `bash scripts/env-up.sh` |
-| 查询返回 0 行 | 范围写错（`stop_row` 是开区间）/ 表为空 / 只请求了缺失列 | 检查 RowKey 前缀；同时请求基础列 |
+| `hbase_connect: Gateway 不可用` | Gateway 未启动 / 地址错 | 联系运维确认 endpoint |
+| 查询返回 0 行 | 范围写错（`stop_row` 开区间）/ 只请求了缺失列 | 检查 RowKey 前缀；同时请求基础列 |
 | `hbase_scan: 连接 'xxx' 未注册` | 没执行 `hbase_connect` | 先注册连接 |
-| 中文乱码 | 终端或数据编码问题 | 确认数据是 UTF-8；扩展按字节透传 |
-
-诊断命令：
-
-```bash
-bash scripts/env-check.sh        # 环境体检（工具链/HBase/夹具/Gateway/扩展）
-bash scripts/env-down.sh         # 停止 Gateway 与 HBase
-```
