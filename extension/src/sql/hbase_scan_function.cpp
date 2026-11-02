@@ -153,6 +153,10 @@ unique_ptr<FunctionData> HbaseScanBind(ClientContext& context, TableFunctionBind
             connection_name, connection_name);
     }
 
+    if (!entry.capabilities.supports_scan) {
+        throw BinderException(
+            "hbase_scan: 当前 Gateway 未声明 supports_scan，无法执行扫描（adapter 能力不足）");
+    }
     result->connection = entry.config;
     result->provider = entry.provider;
     result->request.namespace_name = StringValue::Get(input.inputs[1]);

@@ -7,8 +7,9 @@
 namespace duckdb {
 namespace hbase {
 
-RemoteScanStream::RemoteScanStream(Starter starter, idx_t max_queued)
-    : max_queued_(max_queued < 1 ? 1 : max_queued) {
+RemoteScanStream::RemoteScanStream(Starter starter, idx_t max_queued,
+                                   std::function<void()> on_close)
+    : max_queued_(max_queued < 1 ? 1 : max_queued), on_close_(std::move(on_close)) {
     worker_ = std::thread([this, starter = std::move(starter)]() { Run(std::move(starter)); });
 }
 

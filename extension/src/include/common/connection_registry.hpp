@@ -32,6 +32,8 @@ struct ConnectionConfig {
 struct ConnectionEntry {
     ConnectionConfig config;
     std::shared_ptr<IRemoteScanProvider> provider;
+    //! 建连握手时协商的能力；Bind 阶段据此拒绝不支持的操作
+    ProviderCapabilities capabilities;
 };
 
 //! 连接表：生命周期绑定到 ClientContext（DuckDB 连接），随会话销毁自动释放。

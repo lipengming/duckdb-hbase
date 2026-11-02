@@ -21,7 +21,8 @@ class RemoteScanStream {
 public:
     using Starter = std::function<void(const RemoteBatchCallback&)>;
 
-    explicit RemoteScanStream(Starter starter, idx_t max_queued = 2);
+    explicit RemoteScanStream(Starter starter, idx_t max_queued = 2,
+                              std::function<void()> on_close = nullptr);
     ~RemoteScanStream();
 
     RemoteScanStream(const RemoteScanStream&) = delete;
@@ -44,6 +45,7 @@ private:
     void Run(Starter starter);
 
     idx_t max_queued_;
+    std::function<void()> on_close_;
     mutable std::mutex lock_;
     std::condition_variable cv_;
     std::deque<Item> queue_;

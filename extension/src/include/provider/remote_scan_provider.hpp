@@ -87,6 +87,8 @@ public:
 
     //! 按 RowKey 批量读取，按批回调 Arrow IPC 载荷。
     virtual void BatchGet(const RemoteGetRequest& request, const RemoteBatchCallback& callback) = 0;
+    //! 取消指定请求（幂等）；用于查询中断或提前结束。
+    virtual void Cancel(const string& request_id) = 0;
 
     //! Provider 类型名，例如 "grpc"。
     virtual string Name() const = 0;

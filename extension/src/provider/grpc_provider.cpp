@@ -8,6 +8,7 @@
 #include <chrono>
 #include <grpcpp/grpcpp.h>
 #include <memory>
+#include <thread>
 
 namespace duckdb {
 namespace hbase {
@@ -35,6 +36,35 @@ struct GrpcProvider::Impl {
         return context;
     }
 };
+
+namespace {
+
+//! 从 trailing metadata 还原结构化错误（ErrorInfo），缺失时退化为 gRPC 状态文本。
+string DescribeRpcError(grpc::ClientContext& context, const grpc::Status& status) {
+    auto& metadata = context.GetServerTrailingMetadata();
+    auto entry = metadata.find("hbase-error-bin");
+    if (entry != metadata.end()) {
+        v1::ErrorInfo info;
+        if (info.ParseFromArray(entry->second.data(), static_cast<int>(entry->second.size()))) {
+            string text = "[" + v1::ErrorCode_Name(info.code()) + "] " + info.message();
+            if (info.retryable()) {
+                text += " (retryable)";
+            }
+            if (!info.request_id().empty()) {
+                text += " request_id=" + info.request_id();
+            }
+            return text;
+        }
+    }
+    return status.error_message();
+}
+
+//! 可重试判定：DescribeRpcError 会在可重试错误后追加 "(retryable)"。
+bool IsRetryable(const IOException& error) {
+    return string(error.what()).find("(retryable)") != string::npos;
+}
+
+}  // namespace
 
 GrpcProvider::GrpcProvider(const string& host, uint16_t port, int timeout_ms) : impl_(new Impl()) {
     impl_->target = host + ":" + std::to_string(port);
@@ -73,27 +103,38 @@ ProviderCapabilities GrpcProvider::GetCapabilities() {
 }
 
 RemoteSchema GrpcProvider::GetSchema(const string& namespace_name, const string& table) {
-    impl_->EnsureStub();
-    v1::SchemaRequest request;
-    request.set_namespace_(namespace_name);
-    request.set_table(table);
+    // 元数据查询幂等：可重试错误重试一次（200ms 退避），避免 Gateway 抖动直接暴露给用户
+    for (int attempt = 0;; attempt++) {
+        try {
+            impl_->EnsureStub();
+            v1::SchemaRequest request;
+            request.set_namespace_(namespace_name);
+            request.set_table(table);
 
-    v1::SchemaResponse response;
-    auto context = impl_->NewContext();
-    auto status = impl_->stub->GetSchema(context.get(), request, &response);
-    if (!status.ok()) {
-        throw IOException("Gateway GetSchema 失败 (%s, %s.%s): %s", impl_->target, namespace_name,
-                          table, status.error_message());
-    }
+            v1::SchemaResponse response;
+            auto context = impl_->NewContext();
+            auto status = impl_->stub->GetSchema(context.get(), request, &response);
+            if (!status.ok()) {
+                throw IOException("Gateway GetSchema 失败 (%s, %s.%s): %s", impl_->target,
+                                  namespace_name, table, DescribeRpcError(*context, status));
+            }
 
-    RemoteSchema schema;
-    schema.namespace_name = namespace_name;
-    schema.table = table;
-    for (auto& column : response.columns()) {
-        schema.columns.push_back(
-            RemoteColumn{column.family(), column.qualifier(), column.sql_type()});
+            RemoteSchema schema;
+            schema.namespace_name = namespace_name;
+            schema.table = table;
+            for (auto& column : response.columns()) {
+                schema.columns.push_back(
+                    RemoteColumn{column.family(), column.qualifier(), column.sql_type()});
+            }
+            return schema;
+        } catch (const IOException& error) {
+            if (attempt == 0 && IsRetryable(error)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                continue;
+            }
+            throw;
+        }
     }
-    return schema;
 }
 
 bool GrpcProvider::HealthCheck() {
@@ -146,7 +187,8 @@ void GrpcProvider::Scan(const RemoteScanRequest& request, const RemoteBatchCallb
     }
     auto status = reader->Finish();
     if (!status.ok()) {
-        throw IOException("Gateway Scan 失败 (%s): %s", impl_->target, status.error_message());
+        throw IOException("Gateway Scan 失败 (%s): %s", impl_->target,
+                          DescribeRpcError(*context, status));
     }
     callback(string(), 0, true);
 }
@@ -181,9 +223,27 @@ void GrpcProvider::BatchGet(const RemoteGetRequest& request, const RemoteBatchCa
     }
     auto status = reader->Finish();
     if (!status.ok()) {
-        throw IOException("Gateway BatchGet 失败 (%s): %s", impl_->target, status.error_message());
+        throw IOException("Gateway BatchGet 失败 (%s): %s", impl_->target,
+                          DescribeRpcError(*context, status));
     }
     callback(string(), 0, true);
+}
+
+void GrpcProvider::Cancel(const string& request_id) {
+    if (request_id.empty() || !impl_) {
+        return;
+    }
+    impl_->EnsureStub();
+    v1::CancelRequest request;
+    request.set_request_id(request_id);
+    v1::CancelResponse response;
+    auto context = impl_->NewContext();
+    // 取消失败不影响调用方：只尽力关闭远端 Scanner
+    context->set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(2));
+    auto status = impl_->stub->Cancel(context.get(), request, &response);
+    if (!status.ok()) {
+        // 静默：取消是尽力而为
+    }
 }
 
 string GrpcProvider::Name() const {

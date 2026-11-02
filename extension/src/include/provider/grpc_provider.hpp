@@ -21,6 +21,7 @@ public:
     bool HealthCheck() override;
     void Scan(const RemoteScanRequest& request, const RemoteBatchCallback& callback) override;
     void BatchGet(const RemoteGetRequest& request, const RemoteBatchCallback& callback) override;
+    void Cancel(const string& request_id) override;
     string Name() const override;
     void Close() override;
 

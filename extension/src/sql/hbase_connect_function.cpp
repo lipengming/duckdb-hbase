@@ -38,10 +38,11 @@ void HbaseConnectFunction(DataChunk& args, ExpressionState& state, Vector& resul
             provider->Close();
             throw IOException("hbase_connect: Gateway 不可用 (%s)，请确认服务已启动", endpoint);
         }
-        provider->GetCapabilities();
+        auto capabilities = provider->GetCapabilities();
 
         ConnectionEntry entry;
         entry.config = config;
+        entry.capabilities = capabilities;
         entry.provider = std::shared_ptr<IRemoteScanProvider>(std::move(provider));
         registry.Upsert(std::move(entry));
         result.SetValue(i, Value::BOOLEAN(true));
