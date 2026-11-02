@@ -38,6 +38,7 @@ DuckDB-HBase 不只是一个 SQL Connector，而是一个具备多接入适配�
 
 | 文档 | 内容 |
 | --- | --- |
+| [快速上手](docs/quickstart.md) | 用 DuckDB CLI 查询 HBase 的三步流程与常用 SQL |
 | [技术方案 V1.0](tech_v0.1.md) | 设计基线：架构、模块、协议、API、部署、分包、里程碑 |
 | [架构总览](docs/architecture.md) | 分层、依赖方向、模块边界、端到端链路 |
 | [Extension 设计](docs/extension-design.md) | Table Function、Scan 计划与执行、下推、并发 |
