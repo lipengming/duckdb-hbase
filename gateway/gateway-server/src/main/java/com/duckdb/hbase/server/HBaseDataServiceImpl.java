@@ -1,7 +1,9 @@
 package com.duckdb.hbase.server;
 
 import com.duckdb.hbase.core.Utf8ColumnarEncoder;
+import com.duckdb.hbase.core.GatewayErrors;
 import com.duckdb.hbase.core.GatewayService;
+import com.duckdb.hbase.protocol.v1.ErrorCode;
 import com.duckdb.hbase.protocol.v1.ArrowBatch;
 import com.duckdb.hbase.protocol.v1.BatchEncoding;
 import com.duckdb.hbase.protocol.v1.BatchGetRequest;
@@ -101,8 +103,9 @@ public final class HBaseDataServiceImpl extends HBaseDataServiceGrpc.HBaseDataSe
       responseObserver.onCompleted();
     } catch (HBaseAccessException e) {
       LOG.warn("GetSchema 失败: {}.{}", request.getNamespace(), request.getTable(), e);
+      ErrorCode code = GatewayErrors.classify(e);
       responseObserver.onError(
-          Status.INTERNAL.withDescription(e.getMessage()).withCause(e).asRuntimeException());
+          GatewayErrors.toException(code, e.getMessage(), GatewayErrors.isRetryable(code), ""));
     }
   }
 
@@ -114,7 +117,10 @@ public final class HBaseDataServiceImpl extends HBaseDataServiceGrpc.HBaseDataSe
       stream(cursor, columns, request.getBatchSize(), responseObserver);
     } catch (HBaseAccessException e) {
       LOG.warn("Scan 失败: {}.{}", request.getNamespace(), request.getTable(), e);
-      responseObserver.onError(toStatus(e));
+      ErrorCode code = GatewayErrors.classify(e);
+      responseObserver.onError(
+          GatewayErrors.toException(
+              code, e.getMessage(), GatewayErrors.isRetryable(code), request.getRequestId()));
     }
   }
 
@@ -126,7 +132,10 @@ public final class HBaseDataServiceImpl extends HBaseDataServiceGrpc.HBaseDataSe
       stream(cursor, columns, 0, responseObserver);
     } catch (HBaseAccessException e) {
       LOG.warn("BatchGet 失败: {}.{}", request.getNamespace(), request.getTable(), e);
-      responseObserver.onError(toStatus(e));
+      ErrorCode code = GatewayErrors.classify(e);
+      responseObserver.onError(
+          GatewayErrors.toException(
+              code, e.getMessage(), GatewayErrors.isRetryable(code), request.getRequestId()));
     }
   }
 
@@ -197,14 +206,6 @@ public final class HBaseDataServiceImpl extends HBaseDataServiceGrpc.HBaseDataSe
       throw new HBaseAccessException("表 " + namespace + "." + table + " 没有可用列，请显式指定 columns");
     }
     return columns;
-  }
-
-  private static RuntimeException toStatus(HBaseAccessException e) {
-    Throwable cause = e.getCause();
-    if (cause instanceof IOException) {
-      return Status.UNAVAILABLE.withDescription(e.getMessage()).withCause(e).asRuntimeException();
-    }
-    return Status.INTERNAL.withDescription(e.getMessage()).withCause(e).asRuntimeException();
   }
 
   /** 方便后续列裁剪实现时复用：把协议中的 ColumnRef 转成可读字符串。 */

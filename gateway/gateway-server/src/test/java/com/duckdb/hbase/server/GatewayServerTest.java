@@ -1,13 +1,19 @@
 package com.duckdb.hbase.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.duckdb.hbase.core.AdapterFactory;
+import com.duckdb.hbase.core.GatewayErrors;
 import com.duckdb.hbase.core.GatewayConfig;
 import com.duckdb.hbase.core.GatewayService;
 import com.duckdb.hbase.protocol.v1.ArrowBatch;
 import com.duckdb.hbase.protocol.v1.CapabilityRequest;
+import com.duckdb.hbase.protocol.v1.ErrorCode;
+import com.duckdb.hbase.protocol.v1.ErrorInfo;
 import com.duckdb.hbase.protocol.v1.CapabilityResponse;
 import com.duckdb.hbase.protocol.v1.ColumnRef;
 import com.duckdb.hbase.protocol.v1.HealthRequest;
@@ -21,6 +27,8 @@ import com.duckdb.hbase.spi.HBaseAccessException;
 import com.duckdb.hbase.spi.HealthStatus;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.StatusRuntimeException;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
@@ -105,6 +113,33 @@ class GatewayServerTest {
         response.getColumnsList().stream().anyMatch(column -> column.getFamily().equals("cf1")));
     assertTrue(
         response.getColumnsList().stream().anyMatch(column -> column.getFamily().equals("cf2")));
+  }
+
+  @Test
+  void missingTableReturnsStructuredError() {
+    StatusRuntimeException error =
+        assertThrows(
+            StatusRuntimeException.class,
+            () ->
+                stub.scan(
+                        ScanRequest.newBuilder()
+                            .setNamespace("duckdb_test")
+                            .setTable("no_such_table")
+                            .addColumns(ColumnRef.newBuilder().setFamily("cf1").setQualifier("v").build())
+                            .build())
+                    .next());
+
+    Metadata trailers = error.getTrailers();
+    assertNotNull(trailers);
+    byte[] payload = trailers.get(GatewayErrors.ERROR_INFO_KEY);
+    assertNotNull(payload, "缺少 hbase-error-bin trailing metadata");
+    try {
+      ErrorInfo info = ErrorInfo.parseFrom(payload);
+      assertEquals(ErrorCode.ERROR_CODE_NOT_FOUND, info.getCode());
+      assertFalse(info.getMessage().isEmpty());
+    } catch (Exception e) {
+      throw new AssertionError("ErrorInfo 解析失败", e);
+    }
   }
 
   @Test

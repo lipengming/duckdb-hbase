@@ -89,6 +89,36 @@ message BatchGetRequest {
   int64 max_timestamp = 7;
 }
 
+// 错误码：Gateway 通过 trailing metadata "hbase-error-bin" 返回序列化的 ErrorInfo。
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  // 请求参数非法（RowKey、列描述、版本参数等）
+  ERROR_CODE_INVALID_REQUEST = 1;
+  // 表 / 列族不存在
+  ERROR_CODE_NOT_FOUND = 2;
+  // 认证或授权失败
+  ERROR_CODE_PERMISSION_DENIED = 3;
+  // Gateway 或 HBase 暂不可用（可重试）
+  ERROR_CODE_UNAVAILABLE = 4;
+  // 限流 / 资源不足（可重试）
+  ERROR_CODE_RESOURCE_EXHAUSTED = 5;
+  // 查询被取消
+  ERROR_CODE_CANCELLED = 6;
+  // 能力不支持（如 BatchGet）
+  ERROR_CODE_UNSUPPORTED = 7;
+  // 未预期内部错误
+  ERROR_CODE_INTERNAL = 8;
+}
+
+// 结构化错误详情。
+message ErrorInfo {
+  ErrorCode code = 1;
+  string message = 2;
+  // 是否建议重试；流式 Scan 已返回数据后不应整体重试。
+  bool retryable = 3;
+  string request_id = 4;
+}
+
 // 数据面批次编码。
 enum BatchEncoding {
   BATCH_ENCODING_UNSPECIFIED = 0;
