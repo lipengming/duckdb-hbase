@@ -54,6 +54,42 @@ def test_invalid_max_versions(connection):
     assert "max_versions" in str(info.value)
 
 
+def test_columns_required(connection):
+    """IT-EXT-12e：M1 不支持省略 columns（必须显式报错，而不是静默返回 NULL）。"""
+    sql = (
+        "SELECT * FROM hbase_scan("
+        f"{sql_literal(CONFIG.connection)}, {sql_literal(CONFIG.namespace)}, "
+        f"{sql_literal(CONFIG.table)})"
+    )
+    with pytest.raises(Exception) as info:
+        connection.execute(sql)
+    assert "columns" in str(info.value)
+
+
+def test_multi_version_rejected(connection):
+    """IT-EXT-12f：多版本展开未实现时必须报错。"""
+    sql = (
+        "SELECT * FROM hbase_scan("
+        f"{sql_literal(CONFIG.connection)}, {sql_literal(CONFIG.namespace)}, "
+        f"{sql_literal(CONFIG.table)}, max_versions := 3, columns := ['party:payer_id'])"
+    )
+    with pytest.raises(Exception) as info:
+        connection.execute(sql)
+    assert "多版本" in str(info.value)
+
+
+def test_cache_true_rejected(connection):
+    """IT-EXT-12g：缓存未实现时显式 cache := true 必须报错，不能静默忽略。"""
+    sql = (
+        "SELECT * FROM hbase_scan("
+        f"{sql_literal(CONFIG.connection)}, {sql_literal(CONFIG.namespace)}, "
+        f"{sql_literal(CONFIG.table)}, cache := true, columns := ['party:payer_id'])"
+    )
+    with pytest.raises(Exception) as info:
+        connection.execute(sql)
+    assert "缓存" in str(info.value)
+
+
 def test_gateway_unreachable(session):
     """IT-EXT-12d：Gateway 端口不可达时建连失败并给出端点信息。"""
     with pytest.raises(Exception) as info:

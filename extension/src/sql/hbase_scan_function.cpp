@@ -84,7 +84,7 @@ string RowKeyValue(const Value& value) {
 }
 
 void ParseScanOptions(TableFunctionBindInput& input, HbaseScanBindData& result,
-                      vector<string>& column_specs) {
+                      vector<string>& column_specs, bool& cache_explicit, bool& cache_value) {
     auto& request = result.request;
     for (auto& kv : input.named_parameters) {
         auto& key = kv.first;
@@ -125,10 +125,8 @@ void ParseScanOptions(TableFunctionBindInput& input, HbaseScanBindData& result,
                 request.timestamp_max = BigIntValue::Get(value);
             }
         } else if (key == "cache") {
-            // 缓存引擎在 M3 接入；当前仅解析参数
-            if (!value.IsNull()) {
-                BooleanValue::Get(value);
-            }
+            cache_explicit = true;
+            cache_value = !value.IsNull() && BooleanValue::Get(value);
         } else {
             throw BinderException("hbase_scan: 未知参数 '%s'", key.GetIdentifierName());
         }
@@ -164,24 +162,28 @@ unique_ptr<FunctionData> HbaseScanBind(ClientContext& context, TableFunctionBind
         throw BinderException("hbase_scan: 表名不能为空");
     }
 
+    bool cache_explicit = false;
+    bool cache_value = false;
     vector<string> column_specs;
-    ParseScanOptions(input, *result, column_specs);
+    ParseScanOptions(input, *result, column_specs, cache_explicit, cache_value);
 
-    if (!column_specs.empty()) {
-        // 显式列：类型默认 VARCHAR（HBase 无类型信息，类型映射规则待定）
-        for (auto& spec : column_specs) {
-            result->request.columns.push_back(ParseColumnSpec(spec));
-        }
-    } else if (result->provider) {
-        auto schema =
-            result->provider->GetSchema(result->request.namespace_name, result->request.table);
-        result->request.columns = schema.columns;
+    if (column_specs.empty()) {
+        // 不做“退化为整列族”的静默降级：那会返回一堆 NULL，比报错更难排查
+        throw BinderException("hbase_scan: 必须显式指定 columns := ['family:qualifier']。"
+                              "HBase 没有固定 schema，当前版本不支持不带 columns 的扫描");
+    }
+    for (auto& spec : column_specs) {
+        result->request.columns.push_back(ParseColumnSpec(spec));
     }
 
-    if (result->request.columns.empty()) {
+    if (result->request.max_versions > 1) {
         throw BinderException(
-            "hbase_scan: 表 '%s.%s' 没有可用列，请显式指定 columns := ['cf:qualifier']",
-            result->request.namespace_name, result->request.table);
+            "hbase_scan: 当前版本不支持多版本展开（max_versions > 1），每个 cell 只返回最新版本");
+    }
+
+    if (cache_explicit && cache_value) {
+        throw NotImplementedException(
+            "hbase_scan: 缓存引擎尚未实现（M3）。请省略 cache 参数或显式 cache := false");
     }
 
     for (auto& column : result->request.columns) {

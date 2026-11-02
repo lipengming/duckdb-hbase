@@ -6,6 +6,7 @@
 
 ### Added
 
+- **显式失败优于静默降级**：省略 `columns`、`max_versions > 1`、显式 `cache := true` 现在都会给出明确错误（M1 未实现的能力不再“看起来能跑”）。
 - **数据面（Arrow IPC）**：Gateway 侧 `ArrowIpcEncoder`（每批一条完整 IPC stream）+ `Scan`/`BatchGet` 流式返回；Extension 侧 `RemoteScanStream` 后台拉取 + `DecodeArrowIpc` 解码 + DataChunk 填充。
 - **集成测试**：`integration/`（1M 行客户交易宽表 mock、HBase 装载、pytest 端到端用例）。
 - **Extension 远端 Provider**：`IRemoteScanProvider` 抽象、gRPC 客户端（Health / GetCapabilities / GetSchema）、`hbase_connect` 建连即握手（失败不注册连接）、`hbase_scan` 从 Gateway 取 Schema 完成 Bind；数据面 Arrow IPC 待实现。

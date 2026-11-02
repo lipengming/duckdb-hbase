@@ -102,13 +102,13 @@ hbase_scan(
     max_versions := 1,   -- 返回的版本数
     timestamp_min := NULL,
     timestamp_max := NULL,
-    cache := true        -- 预留：缓存引擎在 M3 实现，当前忽略
+    cache := NULL        -- 预留：M3 之前显式传 true 会报错
 )
 ```
 
 要点：
 
-- **必须显式给 `columns`**。HBase 没有固定 schema，Gateway 只能拿到列族；不传 `columns` 会退化成整列族，列名不带 qualifier。
+- **必须显式给 `columns`**，否则直接报错（M1 不做“退化为整列族”的静默降级）。HBase 没有固定 schema，Gateway 只能拿到列族。
 - 列名一律用 `"family:qualifier"` 双引号引用（因为含冒号）。
 - 所有列当前都是 `VARCHAR`（类型映射待定），数值需要 `CAST`。
 
@@ -155,12 +155,12 @@ SELECT count(*) FROM hbase_scan('prod','duckdb_test','customer_profile', columns
 | --- | --- |
 | 扩展未发布 | 需要 `LOAD` 本地文件 + `-unsigned`；发布到 community extensions 是 M5 |
 | 依赖 Gateway | Extension 不直连 HBase，必须由运维提供 Gateway 端点 |
-| 缓存未实现 | `cache := true` 被忽略，每次查询都访问 HBase（M3） |
+| 缓存未实现 | 显式传 `cache := true` 会报错 `缓存引擎尚未实现（M3）`；省略即可正常查询 |
 | 只有字符串类型 | 数值/时间需要 `CAST` |
 | 单线程扫描 | 一个查询一个远端流；并行扫描在 M2 |
-| 无 Catalog | 必须显式传 namespace / table |
+| 无 Catalog | 必须显式传 namespace / table；不支持 `SELECT *`（必须给 columns） |
 | 只读 | 不支持写入、DDL |
-| 多版本未展开 | `max_versions` 传给 HBase，但每个 cell 只保留最新版本 |
+| 多版本未支持 | `max_versions > 1` 直接报错；每个 cell 只返回最新版本 |
 | 按列扫描跳过无匹配行 | 只请求 `ext:remark` 时，remark 缺失的行不会返回；需要 NULL 语义时同时请求一个必然存在的列，或先 `CREATE TABLE t AS SELECT ...` |
 | `IS NULL` / `FILTER` 不稳定 | 先 `CREATE TABLE t AS SELECT ...` 再查 `t`（已验证语义正确） |
 

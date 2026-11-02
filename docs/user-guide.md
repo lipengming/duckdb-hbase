@@ -74,11 +74,11 @@ SELECT hbase_connect('prod', '{"endpoint": "grpc://127.0.0.1:18080", "timeout_ms
 | `table_name` | VARCHAR | 无（必填） | 表名 |
 | `start_row` | VARCHAR 或 BLOB | NULL（不限下界） | 起始 RowKey，左闭；VARCHAR 按 UTF-8 转字节，BLOB 保持原始字节 |
 | `stop_row` | VARCHAR 或 BLOB | NULL（不限上界） | 结束 RowKey，右开；类型处理同上 |
-| `columns` | VARCHAR[] | NULL（不限列） | 形如 `['cf1:name', 'cf1:age']` |
-| `max_versions` | INTEGER | 1 | 返回的最大版本数 |
+| `columns` | VARCHAR[] | 无（M1 必填） | 形如 `['cf1:name', 'cf1:age']`；省略会报错 |
+| `max_versions` | INTEGER | 1 | 返回的最大版本数；M1 只支持 1，>1 报错 |
 | `timestamp_min` | BIGINT | NULL | 时间戳下界 |
 | `timestamp_max` | BIGINT | NULL | 时间戳上界 |
-| `cache` | BOOLEAN | true | 本次查询是否使用缓存 |
+| `cache` | BOOLEAN | NULL | 本次查询是否使用缓存；M1 缓存未实现，显式 `true` 会报错 |
 
 第一版区间为左闭右开；RowKey 是二进制字节数组，不能一律按 UTF-8 字符串处理，否则会破坏排序与范围比较语义。`cache` 控制单次查询，全局开关见 3.3。
 
