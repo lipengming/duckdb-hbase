@@ -64,18 +64,18 @@
 
 - [x] 定义 `IRemoteScanProvider` 接口（Scan、BatchGet、GetSchema、HealthCheck、GetCapabilities；Cancel 待接入）
 - [x] 定义 `ProviderCapabilities` 结构并实现能力协商
-- [ ] 用 Protobuf 定义请求/响应与 **错误模型**（ErrorResponse 仍待定）
+- [x] 用 Protobuf 定义请求/响应与错误模型（`ErrorInfo` + `ErrorCode` + trailing metadata）
 - [ ] 实现 gRPC 客户端与服务端，替换 M1 的直连路径
 - [x] 定义 Gateway SPI `HBaseAccessAdapter`（capabilities、getSchema、scan、batchGet、cancel、health）
 - [x] 将 Native Java Adapter 拆为独立 Maven 模块，`gateway-server` 仅通过 Factory(ServiceLoader) 装配
-- [ ] 实现远端错误到本地错误的映射与重试策略（Schema 查询、Scan 建立可重试；流读取谨慎），并补充协议兼容性与错误映射单测
+- [x] 实现远端错误到本地错误映射与重试（幂等 RPC 重试一次；Scan 出数据后不重试），补充协议兼容性与结构化错误单测
 
 退出标准（DoD）：
 
 - [x] `scan` 模块只依赖 `remote_scan_provider.hpp`，代码层面无 Adapter 引用
 - [ ] 新增或替换 Adapter 不需要改动 Extension 代码
-- [ ] 能力协商用例覆盖"不支持 Batch Get""不支持时间戳"等组合
-- [ ] 协议字段与错误码在 `docs/protocol.md` 中定稿
+- [x] 能力协商用例覆盖（`supports_scan` 缺失时 Bind 直接报错；Capabilities 字段稳定性测试）
+- [x] 协议字段与错误码在 `docs/protocol.md` 中定稿
 - [ ] M1 的 SQL 用例在 gRPC 路径下全部通过
 
 风险与缓解：

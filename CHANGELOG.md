@@ -6,6 +6,9 @@
 
 ### Added
 
+- **M2 协议与错误模型**：`ErrorInfo`（code/message/retryable/request_id）+ trailing metadata `hbase-error-bin`；Gateway 统一错误分类，Extension 还原为可诊断信息；幂等 RPC 自动重试一次。
+- **取消链路**：`Provider.Cancel` + 查询中断 / LIMIT 提前结束时关闭远端 Scanner；Gateway `Cancel` 按 request_id 幂等关闭游标。
+- **能力协商**：连接握手结果缓存到连接表，`hbase_scan` 在 `supports_scan=false` 时直接拒绝；新增协议字段稳定性测试。
 - **显式失败优于静默降级**：省略 `columns`、`max_versions > 1`、显式 `cache := true` 现在都会给出明确错误（M1 未实现的能力不再“看起来能跑”）。
 - **数据面（Arrow IPC）**：Gateway 侧 `ArrowIpcEncoder`（每批一条完整 IPC stream）+ `Scan`/`BatchGet` 流式返回；Extension 侧 `RemoteScanStream` 后台拉取 + `DecodeArrowIpc` 解码 + DataChunk 填充。
 - **集成测试**：`integration/`（1M 行客户交易宽表 mock、HBase 装载、pytest 端到端用例）。

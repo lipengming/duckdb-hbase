@@ -201,7 +201,7 @@ HBase RPC 超时由 `hbase.rpc_timeout_ms` 配置（示例值 30000）。重试�
 | `gateway-api` | `HBaseAccessAdapter` SPI、`AdapterProvider`（ServiceLoader 发现）、`AdapterCapabilities`、`TableSchema`、`Row`/`ScanCursor`、`HBaseAccessException`；由 `protocol/proto` 生成 gRPC 桩 |
 | `gateway-core` | `GatewayConfig`（`.properties`）、`AdapterFactory`（按 `gateway.adapter` 装配）、`GatewayService` 编排 |
 | `adapter-native` | `NativeHBaseAdapter`：Scan / BatchGet / 表结构 / 取消 / 健康检查，基于 HBase Java Client 2.6 |
-| `gateway-server` | gRPC 服务：Health / GetCapabilities / GetSchema / Cancel / **Scan / BatchGet** 全部接通；Scan/BatchGet 按批编码 Arrow IPC 流式返回 |
+| `gateway-server` | gRPC 服务：Health / GetCapabilities / GetSchema / Cancel / **Scan / BatchGet** 全部接通；Scan/BatchGet 按批编码流式返回；失败时附带 `ErrorInfo` trailing metadata |
 
 两点实现约定：
 

@@ -151,6 +151,34 @@ M1 数据面统一使用 **UTF8 字符串列**：Cell 不存在写 NULL，存在
 | 超时 / 限流 / 资源不足 | Deadline 到期、服务端限流 | 可有限重试 | 退避后重试，受 Deadline 约束 |
 | 内部错误 | Gateway 未预期异常 | 默认不可重试 | 记录 Trace 并返回明确错误 |
 
+### 4.1 结构化错误：ErrorInfo
+
+Gateway 在失败时除了 gRPC Status，还会在 **trailing metadata** 写入 `hbase-error-bin`（序列化的 `ErrorInfo`）：
+
+| 字段 | 编号 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `code` | 1 | `ErrorCode` | 错误分类（见下表） |
+| `message` | 2 | `string` | 可诊断信息，不含凭据 |
+| `retryable` | 3 | `bool` | 是否建议重试 |
+| `request_id` | 4 | `string` | 关联请求，便于日志追踪 |
+
+| `ErrorCode` | gRPC Status | 可重试 | 典型场景 |
+| --- | --- | --- | --- |
+| `INVALID_REQUEST` | `INVALID_ARGUMENT` | 否 | RowKey / 列描述 / 版本参数非法 |
+| `NOT_FOUND` | `NOT_FOUND` | 否 | 表或列族不存在 |
+| `PERMISSION_DENIED` | `PERMISSION_DENIED` | 否 | Kerberos / ACL 失败 |
+| `UNAVAILABLE` | `UNAVAILABLE` | 是 | Gateway 或 HBase 暂不可用 |
+| `RESOURCE_EXHAUSTED` | `RESOURCE_EXHAUSTED` | 是 | 限流 / 资源不足 |
+| `CANCELLED` | `CANCELLED` | 否 | 查询被取消 |
+| `UNSUPPORTED` | `UNIMPLEMENTED` | 否 | 能力不支持（如 BatchGet） |
+| `INTERNAL` | `INTERNAL` | 否 | 未预期异常 |
+
+客户端约定：
+
+- Extension 读不到 metadata 时退化为 gRPC 状态文本，不影响可用性；
+- 幂等 RPC（`GetCapabilities` / `GetSchema`）遇到可重试错误时自动重试一次（200ms 退避）；
+- 流式 `Scan` **一旦返回过数据就不再整体重试**，只能由上层决定是否重扫。
+
 ## 5. 能力协商流程
 
 1. 用户通过 `hbase_connect` 注册 Gateway 地址，Extension 建立会话。
