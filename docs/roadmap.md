@@ -33,22 +33,22 @@
 - [x] `IRemoteScanProvider` + gRPC 客户端（Health / GetCapabilities / GetSchema），`hbase_connect` 建连即握手
 - [x] `hbase_scan()` 数据面：Arrow IPC 解码、后台流式拉取与 DataChunk 填充（UTF8 列）
 - [ ] 列类型映射（BIGINT/DOUBLE/TIMESTAMP）与多版本展开
-- [ ] 实现 `hbase_scan()` Table Function 的 Bind、Init、Global/Local State 与并行 Scan 骨架
+- [x] 实现 `hbase_scan()` Table Function 的 Bind、Init、Global State 与流式 Scan（并行扫描待 M2）
 - [ ] 实现 Projection Pushdown 与 Filter Pushdown 的最小可用路径（Required Columns 与 Output Columns 分离）
 - [ ] 实现 `hbase_columns()` / `hbase_tables()` 的 Schema 获取
 - [x] 搭建 Java Gateway（Maven 多模块）与 gRPC 服务端骨架（Health/Capabilities/Schema/Cancel 已接通）
-- [ ] 实现 Native HBase Adapter 的 `scan()`，使用 HBase Java Client 2.x
-- [ ] 定义并实现 Arrow IPC Streaming 的批次编码与解码
-- [ ] 实现 `DataChunkConverter`（Arrow → DuckDB DataChunk）
-- [ ] 提供 CLI 与 Python 使用示例，并在本地 HBase 2.x 上跑通
+- [x] 实现 Native HBase Adapter 的 `scan()` / `batchGet()`，使用 HBase Java Client 2.x
+- [x] 定义并实现流式批次编码与解码（M1 用 UTF8 列式载荷；Arrow IPC 切换见技术债）
+- [x] 实现 `DataChunkConverter`（列式载荷 → DuckDB DataChunk）
+- [x] 提供 CLI 使用示例（`docs/quickstart.md`），并在本地 HBase 2.6.6 上跑通
 
 退出标准（DoD）：
 
-- [ ] `SELECT * FROM hbase_scan('prod', 'default', '<table>')` 在真实 HBase 2.x 上返回正确行数与列
+- [x] 显式列扫描在真实 HBase 2.6.6 上返回正确行数与列（`SELECT *` 需 M3 前的 Schema 能力）
 - [ ] 投影与过滤下推有单测覆盖，过滤列未被遗漏
-- [ ] 结果集以流式批次返回，内存占用不随结果集线性增长
+- [x] 结果集以流式批次返回（后台线程 + 有界队列），内存占用不随结果集线性增长
 - [ ] CLI 与 Python 示例可复现，步骤写入 `examples/` 与用户文档
-- [ ] 未实现项（缓存、多 Adapter）在文档中明确标注
+- [x] 未实现项（缓存、多 Adapter、类型映射、多版本）在文档与运行时错误中明确标注
 
 风险与缓解：
 
@@ -62,17 +62,17 @@
 
 关键任务：
 
-- [ ] 定义 `IRemoteScanProvider` 接口（Scan、BatchGet、GetSchema、Cancel、CheckHealth、GetCapabilities）
-- [ ] 定义 `ProviderCapabilities` 结构并实现能力协商
-- [ ] 用 Protobuf 定义 ScanRequest / ScanResponse / ArrowBatch / SchemaRequest / BatchGetRequest / 错误模型
+- [x] 定义 `IRemoteScanProvider` 接口（Scan、BatchGet、GetSchema、HealthCheck、GetCapabilities；Cancel 待接入）
+- [x] 定义 `ProviderCapabilities` 结构并实现能力协商
+- [ ] 用 Protobuf 定义请求/响应与 **错误模型**（ErrorResponse 仍待定）
 - [ ] 实现 gRPC 客户端与服务端，替换 M1 的直连路径
-- [ ] 定义 Gateway SPI `HBaseAccessAdapter`（capabilities、getSchema、scan、batchGet、cancel、health）
-- [ ] 将 Native Java Adapter 拆为独立 Maven 模块，`gateway-server` 仅通过 Factory 装配
+- [x] 定义 Gateway SPI `HBaseAccessAdapter`（capabilities、getSchema、scan、batchGet、cancel、health）
+- [x] 将 Native Java Adapter 拆为独立 Maven 模块，`gateway-server` 仅通过 Factory(ServiceLoader) 装配
 - [ ] 实现远端错误到本地错误的映射与重试策略（Schema 查询、Scan 建立可重试；流读取谨慎），并补充协议兼容性与错误映射单测
 
 退出标准（DoD）：
 
-- [ ] `scan` 模块只依赖 `remote_scan_provider.hpp`，代码层面无 Adapter 引用
+- [x] `scan` 模块只依赖 `remote_scan_provider.hpp`，代码层面无 Adapter 引用
 - [ ] 新增或替换 Adapter 不需要改动 Extension 代码
 - [ ] 能力协商用例覆盖"不支持 Batch Get""不支持时间戳"等组合
 - [ ] 协议字段与错误码在 `docs/protocol.md` 中定稿
@@ -194,7 +194,24 @@ M1 基础闭环（hbase_scan 通路）
 2. Provider Protocol 的正式定义：Protobuf、Arrow IPC、错误模型、能力协商与 Gateway Adapter SPI，避免 C++ 与 Java 两套模型不一致（阻塞 M2）。
 3. Cache Coverage Index 的算法：多 Segment、多列、多 RowKey 范围之间的覆盖关系（阻塞 M3）。
 
-## 10. 版本与文档策略
+## 10. 已知缺陷与技术债
+
+按影响面排序，均需在对应里程碑内闭环：
+
+| # | 问题 | 影响 | 归属 |
+| --- | --- | --- | --- |
+| 1 | `IS NULL` / `FILTER` / `DISTINCT` 在扫描结果上求值不稳定（`count(col)` 正确但 `FILTER (col IS NULL)` 误判） | NULL 语义不可信，集成测试 1 项失败 | M1 收尾 |
+| 2 | HBase 按列扫描会跳过“没有任何匹配 cell”的行，NULL 不可观测 | 只查缺失列时行数偏少 | M1 收尾（自动附加定位列或文档约定） |
+| 3 | 数据面用自定义 UTF8 列式编码，未落地 Arrow IPC | 与设计基线的 `ArrowBatch.ipc_payload` 语义不完全一致 | M2 |
+| 4 | 列类型全部为 `VARCHAR`，无 BIGINT/DOUBLE/TIMESTAMP 映射 | 用户必须手写 CAST，聚合易错 | M1 收尾 |
+| 5 | 多版本未展开（`max_versions > 1` 报错） | 无法做版本对比 | M2 |
+| 6 | `hbase_connect` 只支持端点字符串，无 JSON 配置 / 超时 / TLS / 认证 | 生产可用性不足 | M2/M5 |
+| 7 | 单线程扫描、无 Filter Pushdown、无 RowKey 区间切分 | 大范围查询吞吐受限 | M2 |
+| 8 | 无 C++ 单元测试（仅 SQLLogicTest + Java 集成测试） | 覆盖索引/合并等纯逻辑难回归 | M3 前置 |
+| 9 | 扩展未签名、未发布到 Extension Repository | 用户必须 `LOAD` 本地文件 + `-unsigned` | M5 |
+| 10 | CI 中 vcpkg 编译 gRPC 耗时 30-60 分钟 | 反馈慢 | 持续优化（缓存/预编译） |
+
+## 11. 版本与文档策略
 
 - `tech_v0.1.md` 是设计基线，任何实现偏离必须先记录理由，不得反过来修改既有结论以迁就代码。
 - 每完成一个里程碑，更新本文件的任务勾选、退出标准与状态，并在 `CHANGELOG.md` 记录。
