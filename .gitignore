@@ -48,6 +48,7 @@ compile_commands.json
 *.profdata
 
 # ---- DuckDB Extension 构建产物与依赖 ----
+vcpkg_installed/
 # 注意：duckdb/ 与 extension-ci-tools/ 是 git submodule，不能忽略（见 .gitmodules）
 third_party/
 *.duckdb_extension
