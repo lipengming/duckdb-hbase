@@ -98,7 +98,8 @@ def test_projection_and_schema(scan_ready, manifest):
     rows = cursor.fetchall()
     assert len(rows) == 10
     for row in rows:
-        assert row[0].startswith("U")
+        # 支出方向付款方是热客户 U000001；收入方向则是商户（M...），两者都是合法 payer
+        assert row[0][:1] in {"U", "M"} and row[0][1:].isdigit(), row[0]
         assert Decimal(row[1]) > 0
         assert row[2] in {"CNY", "USD", "EUR", "HKD", "JPY"}
         assert row[3]
@@ -198,31 +199,41 @@ def test_limit_is_applied(scan_ready, manifest):
 
 
 def test_null_versus_empty_string(scan_ready, manifest):
-    """IT-EXT-10：Cell 缺失 -> NULL；Cell 存在但空串 -> ''。"""
+    """IT-EXT-10：Cell 缺失 -> NULL；Cell 存在但空串 -> ''。
+
+    两个约束：
+    1. 必须同时请求一个必然存在的列（party:payer_id），否则 HBase 会跳过
+       没有任何匹配 cell 的行，NULL 无从观测；
+    2. 当前版本在 scan 结果上直接 FILTER(IS NULL) 存在已知缺陷（见 docs/roadmap.md
+       技术债 #1），因此先物化再统计，验证的是 HBase -> DuckDB 的 NULL 传播本身。
+    """
     start, stop = helpers.day_range(manifest, 0)
-    sql = (
-        "SELECT "
-        "sum(CASE WHEN "
-        + q("ext:remark")
-        + " IS NULL THEN 1 ELSE 0 END), "
-        "sum(CASE WHEN "
-        + q("ext:remark")
-        + " = '' THEN 1 ELSE 0 END) FROM "
-        + table_scan_sql(
-            connection=CONFIG.connection,
-            namespace=CONFIG.namespace,
-            table=CONFIG.table,
-            columns=["ext:remark"],
-            start_row=start,
-            stop_row=stop,
-        )
+    scan = table_scan_sql(
+        connection=CONFIG.connection,
+        namespace=CONFIG.namespace,
+        table=CONFIG.table,
+        columns=["party:payer_id", "ext:remark"],
+        start_row=start,
+        stop_row=stop,
     )
-    nulls, empties = scan_ready.fetchone(sql)
-    assert (nulls or 0) > 0
-    assert (empties or 0) > 0
+    scan_ready.execute("DROP TABLE IF EXISTS it_null_probe")
+    scan_ready.execute(
+        f"CREATE TABLE it_null_probe AS SELECT \"party:payer_id\" AS payer, "
+        f"\"ext:remark\" AS remark FROM {scan}"
+    )
+    try:
+        nulls, empties, total = scan_ready.fetchone(
+            "SELECT count(*) FILTER (WHERE remark IS NULL), "
+            "count(*) FILTER (WHERE remark = ''), count(*) FROM it_null_probe"
+        )
+    finally:
+        scan_ready.execute("DROP TABLE IF EXISTS it_null_probe")
+
+    assert total > 0
+    assert (nulls or 0) > 0, "缺少 NULL 语义：应存在 remark 缺失的行"
+    assert (empties or 0) > 0, "缺少空串语义：应存在 remark 为空串的行"
 
 
-@pytest.mark.slow
 def test_pagination_by_day_covers_hot_customer(scan_ready, manifest):
     """IT-EXT-07b：按天分页（stop_row 推进）覆盖全部热客户数据，无重复/遗漏。"""
     dataset = dataset_from_manifest(manifest)

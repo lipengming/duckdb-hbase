@@ -6,6 +6,9 @@
 
 ### Added
 
+- **多版本展开**：`max_versions > 1` 时 Gateway 按 Cell 时间戳展开成多行，追加 `__timestamp` 列；集成测试覆盖 r011 双版本。
+- **并行扫描**：按 RowKey 区间切分为多个分区，每个线程持有独立远端流（`MaxThreads = 分区数`）；分区数受 Gateway `max_parallel_scans` 约束。
+- **ADR-001**：记录 M2 数据面使用 UTF8 列式编码、Arrow IPC 延后的决策与回退条件。
 - **M2 协议与错误模型**：`ErrorInfo`（code/message/retryable/request_id）+ trailing metadata `hbase-error-bin`；Gateway 统一错误分类，Extension 还原为可诊断信息；幂等 RPC 自动重试一次。
 - **取消链路**：`Provider.Cancel` + 查询中断 / LIMIT 提前结束时关闭远端 Scanner；Gateway `Cancel` 按 request_id 幂等关闭游标。
 - **能力协商**：连接握手结果缓存到连接表，`hbase_scan` 在 `supports_scan=false` 时直接拒绝；新增协议字段稳定性测试。

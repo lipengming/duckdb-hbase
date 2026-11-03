@@ -7,14 +7,13 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * M1 数据面编码：UTF8 列 + 长度表（大端），无第三方依赖。
- *
- * <p>格式（见 docs/protocol.md §3.4）：
+ * 数据面编码：UTF8 列 + 长度表（大端），无第三方依赖。
  *
  * <pre>
  * magic      : int32  0x44484231 ('DHB1')
@@ -24,12 +23,15 @@ import java.util.Map;
  * 每列数据   : int32 length[rows]（-1 表示 NULL）+ 拼接后的 UTF8 字节
  * </pre>
  *
- * <p>目标格式是 Arrow IPC（{@code BATCH_ENCODING_ARROW_IPC}），在 M2 切换；
- * 当前实现保证零依赖、可逐批解码、内存有界。
+ * <p>max_versions &gt; 1 时按 Cell 时间戳展开，并追加 {@code __timestamp} 列。
+ * 目标格式为 Arrow IPC，当前实现为过渡方案，见 docs/roadmap.md 技术债。
  */
 public final class Utf8ColumnarEncoder {
 
   private static final int MAGIC = 0x44484231; // "DHB1"
+
+  /** max_versions > 1 时追加的时间戳列（毫秒字符串，与其它列一样为 VARCHAR）。 */
+  public static final String TIMESTAMP_COLUMN = "__timestamp";
 
   /** 编码结果。 */
   public static final class EncodedBatch {
@@ -62,6 +64,18 @@ public final class Utf8ColumnarEncoder {
   }
 
   public EncodedBatch encode(List<ColumnRef> columns, List<Row> rows) throws IOException {
+    return encode(columns, rows, false);
+  }
+
+  /**
+   * @param expandVersions true 时按 Cell 时间戳展开成多行，并追加 {@link #TIMESTAMP_COLUMN} 列
+   */
+  public EncodedBatch encode(List<ColumnRef> columns, List<Row> rows, boolean expandVersions)
+      throws IOException {
+    if (expandVersions) {
+      return encodeExpanded(columns, rows);
+    }
+
     ByteArrayOutputStream buffer = new ByteArrayOutputStream(64 * 1024);
     DataOutputStream out = new DataOutputStream(buffer);
 
@@ -76,49 +90,119 @@ public final class Utf8ColumnarEncoder {
     }
 
     // 每行只建一次索引，避免 O(列数 x 列数) 的重复扫描
-    java.util.List<Map<String, Row.Cell>> rowCells = new java.util.ArrayList<>(rows.size());
+    List<Map<String, Row.Cell>> rowCells = new ArrayList<>(rows.size());
     for (Row row : rows) {
       rowCells.add(indexCells(row));
     }
 
     for (ColumnRef column : columns) {
       String name = columnName(column);
-      byte[][] values = new byte[rows.size()][];
-      for (int i = 0; i < rows.size(); i++) {
-        Row.Cell cell = rowCells.get(i).get(name);
+      List<byte[]> values = new ArrayList<>(rows.size());
+      for (Map<String, Row.Cell> cells : rowCells) {
+        Row.Cell cell = cells.get(name);
         // Cell 不存在 → NULL；Cell 存在但值为空 → 空字符串
-        values[i] = (cell == null || cell.value() == null) ? null : cell.value();
+        values.add(cell == null || cell.value() == null ? null : cell.value());
       }
-      for (byte[] value : values) {
-        out.writeInt(value == null ? -1 : value.length);
-      }
-      for (byte[] value : values) {
-        if (value != null) {
-          out.write(value);
-        }
-      }
+      writeColumn(out, values);
     }
 
     out.flush();
-    int nulls = 0;
-    for (int i = 0; i < rows.size(); i++) {
-      // 诊断：统计编码进 payload 的 NULL 数
-    }
-    if (System.getenv("DH_ENCODER_DEBUG") != null) {
-      System.err.println("[encoder] cols=" + columns.size() + " rows=" + rows.size());
-    }
     return new EncodedBatch(buffer.toByteArray(), rows.size());
+  }
+
+  /** 按 (RowKey, Cell 时间戳) 展开：每个时间戳一行，缺失列写 NULL，末尾追加时间戳列。 */
+  private EncodedBatch encodeExpanded(List<ColumnRef> columns, List<Row> rows) throws IOException {
+    List<String> columnNames = new ArrayList<>(columns.size());
+    for (ColumnRef column : columns) {
+      columnNames.add(columnName(column));
+    }
+
+    List<Map<Long, Map<String, byte[]>>> expanded = new ArrayList<>(rows.size());
+    int outputRows = 0;
+    for (Row row : rows) {
+      Map<Long, Map<String, byte[]>> byVersion = new HashMap<>();
+      for (Row.Cell cell : row.cells()) {
+        String key = cellName(cell);
+        if (!columnNames.contains(key)) {
+          continue;
+        }
+        byVersion
+            .computeIfAbsent(cell.timestamp(), ignored -> new HashMap<>())
+            .putIfAbsent(key, cell.value());
+      }
+      if (byVersion.isEmpty()) {
+        continue;
+      }
+      expanded.add(byVersion);
+      outputRows += byVersion.size();
+    }
+
+    ByteArrayOutputStream buffer = new ByteArrayOutputStream(64 * 1024);
+    DataOutputStream out = new DataOutputStream(buffer);
+    out.writeInt(MAGIC);
+    out.writeInt(columnNames.size() + 1);
+    out.writeInt(outputRows);
+
+    for (String name : columnNames) {
+      byte[] bytes = name.getBytes(StandardCharsets.UTF_8);
+      out.writeInt(bytes.length);
+      out.write(bytes);
+    }
+    byte[] timestampName = TIMESTAMP_COLUMN.getBytes(StandardCharsets.UTF_8);
+    out.writeInt(timestampName.length);
+    out.write(timestampName);
+
+    for (String name : columnNames) {
+      List<byte[]> values = new ArrayList<>(outputRows);
+      for (Map<Long, Map<String, byte[]>> byVersion : expanded) {
+        for (Long timestamp : sortedTimestamps(byVersion)) {
+          values.add(byVersion.get(timestamp).get(name));
+        }
+      }
+      writeColumn(out, values);
+    }
+
+    List<byte[]> timestamps = new ArrayList<>(outputRows);
+    for (Map<Long, Map<String, byte[]>> byVersion : expanded) {
+      for (Long timestamp : sortedTimestamps(byVersion)) {
+        timestamps.add(Long.toString(timestamp).getBytes(StandardCharsets.UTF_8));
+      }
+    }
+    writeColumn(out, timestamps);
+
+    out.flush();
+    return new EncodedBatch(buffer.toByteArray(), outputRows);
+  }
+
+  private static List<Long> sortedTimestamps(Map<Long, Map<String, byte[]>> byVersion) {
+    List<Long> timestamps = new ArrayList<>(byVersion.keySet());
+    timestamps.sort((a, b) -> Long.compare(b, a)); // 新版本在前
+    return timestamps;
+  }
+
+  private static void writeColumn(DataOutputStream out, List<byte[]> values) throws IOException {
+    for (byte[] value : values) {
+      out.writeInt(value == null ? -1 : value.length);
+    }
+    for (byte[] value : values) {
+      if (value != null) {
+        out.write(value);
+      }
+    }
   }
 
   private static Map<String, Row.Cell> indexCells(Row row) {
     Map<String, Row.Cell> cells = new HashMap<>();
     for (Row.Cell cell : row.cells()) {
-      String family = new String(cell.family(), StandardCharsets.UTF_8);
-      String qualifier = new String(cell.qualifier(), StandardCharsets.UTF_8);
-      String key = qualifier.isEmpty() ? family : family + ":" + qualifier;
       // HBase 按时间戳倒序返回，保留第一个（最新版本）
-      cells.putIfAbsent(key, cell);
+      cells.putIfAbsent(cellName(cell), cell);
     }
     return cells;
+  }
+
+  private static String cellName(Row.Cell cell) {
+    String family = new String(cell.family(), StandardCharsets.UTF_8);
+    String qualifier = new String(cell.qualifier(), StandardCharsets.UTF_8);
+    return qualifier.isEmpty() ? family : family + ":" + qualifier;
   }
 }

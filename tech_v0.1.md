@@ -2272,3 +2272,15 @@ Python 同样支持通过 `duckdb.connect()` 加载 Extension。
 3. Cache Coverage Index 的算法。 这是最有技术含量的部分，需要解决多 Segment、多列、多 RowKey 范围之间的覆盖关系。
 
 我建议下一步直接进入第一个问题：基于 DuckDB Extension Template，给出 `hbase_scan()` 的完整 C++ 类设计、调用链和核心接口代码，并使它能够与上述 Cache Manager、Provider 接口无缝衔接。
+
+---
+
+## 附录 A：设计修订记录（ADR）
+
+### ADR-001：数据面编码在 M2 阶段采用 UTF8 列式载荷，Arrow IPC 延后
+
+- **背景**：本方案 §3.5 约定 `ArrowBatch.ipc_payload` 承载 Arrow IPC。实现阶段发现 C++ 侧需要 Arrow C++ 依赖，而 vcpkg 构建 arrow 时在 boost/thrift 下载与编译阶段长时间失败（网络与体积原因），阻塞了端到端交付。
+- **决策**：M1/M2 的数据面使用 `BATCH_ENCODING_UTF8_COLUMNS`（magic + 列名 + 长度表 + 数据，见 `docs/protocol.md` §3.4）；协议保留 `ArrowBatch.encoding` 字段，后续切换 Arrow IPC 不需要破坏性变更。
+- **影响**：所有列以 UTF8 字符串承载，NULL 用长度 `-1` 表示；类型映射与多版本展开在这一编码上实现。
+- **回退条件**：当 Arrow C++ 依赖可以稳定构建（或采用预编译包）时，新增 `BATCH_ENCODING_ARROW_IPC` 编码并让 Gateway 按能力协商结果选择编码；Extension 侧按 `encoding` 分派解码器。
+- **状态**：已生效（2026-11），Arrow IPC 列在 `docs/roadmap.md` 技术债。

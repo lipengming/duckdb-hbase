@@ -7,8 +7,7 @@
 #include "scan/columnar_batch_decoder.hpp"
 #include "scan/remote_scan_stream.hpp"
 
-#include <cstdio>
-#include <cstdlib>
+#include <algorithm>
 #include <mutex>
 
 namespace duckdb {
@@ -21,23 +20,34 @@ struct HbaseScanBindData : public TableFunctionData {
     ConnectionConfig connection;
     std::shared_ptr<IRemoteScanProvider> provider;
     RemoteScanRequest request;
+    idx_t max_partitions = 1;
 };
 
-//! 执行期状态：后台流 + 当前已解码批次。
+//! 一个扫描分区（RowKey 区间）。
+struct ScanPartition {
+    string start_row;
+    string stop_row;
+    bool include_start = true;
+    bool include_stop = false;
+};
+
+//! 执行期共享状态：分区队列 + 列映射。
 struct HbaseScanGlobalState : public GlobalTableFunctionState {
-    unique_ptr<RemoteScanStream> stream;
-    DecodedBatch batch;
-    idx_t offset = 0;
+    std::shared_ptr<IRemoteScanProvider> provider;
+    RemoteScanRequest request;
+    vector<ScanPartition> partitions;
+    atomic<idx_t> next_partition{0};
     vector<column_t> column_ids;
     idx_t bind_column_count = 0;
 
-    // 串行消费：即使 DuckDB 调度多个 Execute，也保证 batch/offset 不被并发修改
-    std::mutex exec_lock;
+    idx_t MaxThreads() const override { return partitions.empty() ? 1 : partitions.size(); }
+};
 
-    idx_t MaxThreads() const override {
-        // M1：单个远端流串行消费；并行扫描在 M2 按 RowKey 区间切分。
-        return 1;
-    }
+//! 线程本地状态：每个线程持有自己的远端流。
+struct HbaseScanLocalState : public LocalTableFunctionState {
+    unique_ptr<RemoteScanStream> stream;
+    DecodedBatch batch;
+    idx_t offset = 0;
 };
 
 //! 把 Provider 返回的逻辑类型名映射为 DuckDB LogicalType；未知类型退化为 VARCHAR。
@@ -139,6 +149,76 @@ void ParseScanOptions(TableFunctionBindInput& input, HbaseScanBindData& result,
     }
 }
 
+//! 求 (a, b) 之间的一个 RowKey；无法切分时返回空串。
+string Midpoint(const string& a, const string& b) {
+    idx_t index = 0;
+    while (index < a.size() && index < b.size() && a[index] == b[index]) {
+        index++;
+    }
+    if (index == a.size()) {
+        // a 是 b 的前缀：a + (b[i] / 2)
+        if (index < b.size() && static_cast<uint8_t>(b[index]) > 1) {
+            string mid = a;
+            mid.push_back(static_cast<char>(static_cast<uint8_t>(b[index]) / 2));
+            return mid;
+        }
+        return string();
+    }
+    auto low = static_cast<uint8_t>(a[index]);
+    auto high = static_cast<uint8_t>(b[index]);
+    if (low + 1 >= high) {
+        // 相邻字节，无法再切
+        return string();
+    }
+    string mid = a.substr(0, index);
+    mid.push_back(static_cast<char>((low + high) / 2));
+    return mid;
+}
+
+void CollectBoundaries(const string& low, const string& high, idx_t parts,
+                       vector<string>& boundaries) {
+    if (parts <= 1) {
+        return;
+    }
+    auto mid = Midpoint(low, high);
+    if (mid.empty()) {
+        return;
+    }
+    boundaries.push_back(mid);
+    auto left = parts / 2;
+    CollectBoundaries(low, mid, left, boundaries);
+    CollectBoundaries(mid, high, parts - left, boundaries);
+}
+
+//! 把 [start, stop) 切成最多 parts 个分区；无法切分时退化为单分区。
+vector<ScanPartition> BuildPartitions(const RemoteScanRequest& request, idx_t parts) {
+    ScanPartition whole{request.start_row, request.stop_row, request.include_start,
+                        request.include_stop};
+    if (parts <= 1 || request.start_row.empty() || request.stop_row.empty()) {
+        return {whole};
+    }
+
+    vector<string> boundaries;
+    CollectBoundaries(request.start_row, request.stop_row, parts, boundaries);
+    if (boundaries.empty()) {
+        return {whole};
+    }
+    sort(boundaries.begin(), boundaries.end());
+    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+
+    vector<ScanPartition> result;
+    auto previous = request.start_row;
+    for (auto& boundary : boundaries) {
+        if (boundary <= previous || boundary >= request.stop_row) {
+            continue;
+        }
+        result.push_back(ScanPartition{previous, boundary, true, false});
+        previous = boundary;
+    }
+    result.push_back(ScanPartition{previous, request.stop_row, true, request.include_stop});
+    return result;
+}
+
 unique_ptr<FunctionData> HbaseScanBind(ClientContext& context, TableFunctionBindInput& input,
                                        vector<LogicalType>& return_types,
                                        vector<Identifier>& names) {
@@ -159,6 +239,9 @@ unique_ptr<FunctionData> HbaseScanBind(ClientContext& context, TableFunctionBind
     }
     result->connection = entry.config;
     result->provider = entry.provider;
+    result->max_partitions = entry.capabilities.max_parallel_scans > 0
+                                 ? static_cast<idx_t>(entry.capabilities.max_parallel_scans)
+                                 : 1;
     result->request.namespace_name = StringValue::Get(input.inputs[1]);
     result->request.table = StringValue::Get(input.inputs[2]);
     result->request.request_id = "scan-" + connection_name + "-" + result->request.table;
@@ -180,11 +263,6 @@ unique_ptr<FunctionData> HbaseScanBind(ClientContext& context, TableFunctionBind
         result->request.columns.push_back(ParseColumnSpec(spec));
     }
 
-    if (result->request.max_versions > 1) {
-        throw BinderException(
-            "hbase_scan: 当前版本不支持多版本展开（max_versions > 1），每个 cell 只返回最新版本");
-    }
-
     if (cache_explicit && cache_value) {
         throw NotImplementedException(
             "hbase_scan: 缓存引擎尚未实现（M3）。请省略 cache 参数或显式 cache := false");
@@ -196,6 +274,11 @@ unique_ptr<FunctionData> HbaseScanBind(ClientContext& context, TableFunctionBind
         names.push_back(Identifier(name));
         return_types.push_back(MapSqlType(column.sql_type));
     }
+    if (result->request.max_versions > 1) {
+        // Gateway 会按 Cell 时间戳展开成多行，并追加时间戳列
+        names.push_back(Identifier("__timestamp"));
+        return_types.push_back(LogicalType::VARCHAR);
+    }
 
     return std::move(result);
 }
@@ -204,55 +287,90 @@ unique_ptr<GlobalTableFunctionState> HbaseScanInitGlobal(ClientContext& context,
                                                          TableFunctionInitInput& input) {
     auto& bind_data = input.bind_data->Cast<HbaseScanBindData>();
     auto state = make_uniq<HbaseScanGlobalState>();
+    state->provider = bind_data.provider;
+    state->request = bind_data.request;
     state->column_ids = input.column_ids;
-    state->bind_column_count = bind_data.request.columns.size();
-    auto provider = bind_data.provider;
-    auto request = bind_data.request;
-    // 后台线程按批拉取，主线程按需消费；有界队列保证内存不随结果集增长
-    state->stream =
-        make_uniq<RemoteScanStream>([provider, request](const RemoteBatchCallback& callback) {
-            provider->Scan(request, callback);
-        });
+    state->bind_column_count =
+        bind_data.request.columns.size() + (bind_data.request.max_versions > 1 ? 1 : 0);
+    state->partitions = BuildPartitions(bind_data.request, bind_data.max_partitions);
     return std::move(state);
+}
+
+unique_ptr<LocalTableFunctionState> HbaseScanInitLocal(ExecutionContext& context,
+                                                       TableFunctionInitInput& input,
+                                                       GlobalTableFunctionState* global_state) {
+    return make_uniq<HbaseScanLocalState>();
 }
 
 void HbaseScanExecute(ClientContext& context, TableFunctionInput& data, DataChunk& output) {
     auto& state = data.global_state->Cast<HbaseScanGlobalState>();
-    std::lock_guard<std::mutex> guard(state.exec_lock);
+    auto& local = data.local_state->Cast<HbaseScanLocalState>();
+    output.Reset();
     idx_t produced = 0;
 
     while (produced < STANDARD_VECTOR_SIZE) {
-        if (state.offset >= state.batch.row_count) {
+        if (context.IsInterrupted()) {
+            if (local.stream) {
+                local.stream->Close();
+            }
+            throw InterruptException("hbase_scan: 查询被中断");
+        }
+
+        if (local.offset >= local.batch.row_count) {
+            if (!local.stream) {
+                auto index = state.next_partition.fetch_add(1);
+                if (index >= state.partitions.size()) {
+                    break;
+                }
+                auto& partition = state.partitions[index];
+                auto request = state.request;
+                request.start_row = partition.start_row;
+                request.stop_row = partition.stop_row;
+                request.include_start = partition.include_start;
+                request.include_stop = partition.include_stop;
+                request.request_id = state.request.request_id + "-p" + std::to_string(index);
+                auto provider = state.provider;
+                local.stream = make_uniq<RemoteScanStream>(
+                    [provider, request](const RemoteBatchCallback& callback) {
+                        provider->Scan(request, callback);
+                    },
+                    /*max_queued=*/2,
+                    [provider, request]() { provider->Cancel(request.request_id); });
+            }
+
             string payload;
             int64_t row_count = 0;
-            if (!state.stream->Next(payload, row_count)) {
-                break;
-            }
-            state.batch = DecodeColumnarBatch(payload);
-            state.offset = 0;
-            if (state.batch.row_count == 0) {
+            if (!local.stream->Next(payload, row_count)) {
+                local.stream.reset();
+                local.batch = DecodedBatch();
+                local.offset = 0;
                 continue;
             }
-            if (state.batch.columns.size() != state.bind_column_count) {
+            local.batch = DecodeColumnarBatch(payload);
+            local.offset = 0;
+            if (local.batch.row_count == 0) {
+                continue;
+            }
+            if (local.batch.columns.size() != state.bind_column_count) {
                 throw IOException("hbase_scan: 数据批列数(%llu)与绑定列数(%llu)不一致",
-                                  static_cast<unsigned long long>(state.batch.columns.size()),
+                                  static_cast<unsigned long long>(local.batch.columns.size()),
                                   static_cast<unsigned long long>(state.bind_column_count));
             }
         }
 
-        auto available = state.batch.row_count - state.offset;
+        auto available = local.batch.row_count - local.offset;
         auto take = MinValue<idx_t>(available, STANDARD_VECTOR_SIZE - produced);
         for (idx_t column_index = 0; column_index < output.ColumnCount(); column_index++) {
             auto source_column =
                 state.column_ids.empty() ? column_index : state.column_ids[column_index];
             auto& vector = output.data[column_index];
-            auto& values = state.batch.columns[source_column];
-            auto& valid = state.batch.valid[source_column];
+            auto& values = local.batch.columns[source_column];
+            auto& valid = local.batch.valid[source_column];
 
             ValidityMask mask(STANDARD_VECTOR_SIZE);
             mask.SetAllValid(STANDARD_VECTOR_SIZE);
             for (idx_t i = 0; i < take; i++) {
-                auto source_row = state.offset + i;
+                auto source_row = local.offset + i;
                 auto target_row = produced + i;
                 if (!valid[source_row]) {
                     mask.SetInvalid(target_row);
@@ -265,7 +383,7 @@ void HbaseScanExecute(ClientContext& context, TableFunctionInput& data, DataChun
             FlatVector::SetValidity(vector, mask);
         }
         produced += take;
-        state.offset += take;
+        local.offset += take;
     }
 
     output.SetCardinality(produced);
@@ -274,9 +392,9 @@ void HbaseScanExecute(ClientContext& context, TableFunctionInput& data, DataChun
 }  // namespace
 
 void RegisterScanFunctions(ExtensionLoader& loader) {
-    TableFunction hbase_scan("hbase_scan",
-                             {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
-                             HbaseScanExecute, HbaseScanBind, HbaseScanInitGlobal);
+    TableFunction hbase_scan(
+        "hbase_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+        HbaseScanExecute, HbaseScanBind, HbaseScanInitGlobal, HbaseScanInitLocal);
 
     hbase_scan.GetSignature().WithTypedKwargs("options", [](TypedKwargs& options) {
         options.Add("start_row", LogicalType::VARCHAR)
@@ -289,7 +407,6 @@ void RegisterScanFunctions(ExtensionLoader& loader) {
     });
 
     hbase_scan.projection_pushdown = true;
-    hbase_scan.parallelism = TableFunctionParallelism::FORCE_SINGLE_THREADED;
     loader.RegisterFunction(hbase_scan);
 }
 

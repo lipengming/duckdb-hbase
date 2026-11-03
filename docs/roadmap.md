@@ -32,7 +32,7 @@
 - [x] `hbase_scan()` 参数解析与校验
 - [x] `IRemoteScanProvider` + gRPC 客户端（Health / GetCapabilities / GetSchema），`hbase_connect` 建连即握手
 - [x] `hbase_scan()` 数据面：Arrow IPC 解码、后台流式拉取与 DataChunk 填充（UTF8 列）
-- [ ] 列类型映射（BIGINT/DOUBLE/TIMESTAMP）与多版本展开
+- [ ] 列类型映射（BIGINT/DOUBLE/TIMESTAMP）
 - [x] 实现 `hbase_scan()` Table Function 的 Bind、Init、Global State 与流式 Scan（并行扫描待 M2）
 - [ ] 实现 Projection Pushdown 与 Filter Pushdown 的最小可用路径（Required Columns 与 Output Columns 分离）
 - [ ] 实现 `hbase_columns()` / `hbase_tables()` 的 Schema 获取

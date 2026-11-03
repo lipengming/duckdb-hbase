@@ -99,7 +99,7 @@ hbase_scan(
     start_row := NULL,   -- 起始 RowKey（含），NULL = 不限
     stop_row  := NULL,   -- 结束 RowKey（不含），NULL = 不限
     columns   := NULL,   -- 列列表 ['family:qualifier', ...]
-    max_versions := 1,   -- 返回的版本数
+    max_versions := 1,   -- >1 时按时间戳展开，并追加 __timestamp 列
     timestamp_min := NULL,
     timestamp_max := NULL,
     cache := NULL        -- 预留：M3 之前显式传 true 会报错
@@ -160,7 +160,7 @@ SELECT count(*) FROM hbase_scan('prod','duckdb_test','customer_profile', columns
 | 单线程扫描 | 一个查询一个远端流；并行扫描在 M2 |
 | 无 Catalog | 必须显式传 namespace / table；不支持 `SELECT *`（必须给 columns） |
 | 只读 | 不支持写入、DDL |
-| 多版本未支持 | `max_versions > 1` 直接报错；每个 cell 只返回最新版本 |
+| 多版本 | `max_versions > 1` 时按 Cell 时间戳展开成多行，并追加 `__timestamp`（VARCHAR，毫秒） |
 | 按列扫描跳过无匹配行 | 只请求 `ext:remark` 时，remark 缺失的行不会返回；需要 NULL 语义时同时请求一个必然存在的列，或先 `CREATE TABLE t AS SELECT ...` |
 | `IS NULL` / `FILTER` 不稳定 | 先 `CREATE TABLE t AS SELECT ...` 再查 `t`（已验证语义正确） |
 

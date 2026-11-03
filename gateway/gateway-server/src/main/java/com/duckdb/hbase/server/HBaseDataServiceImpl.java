@@ -114,7 +114,7 @@ public final class HBaseDataServiceImpl extends HBaseDataServiceGrpc.HBaseDataSe
     try (ScanCursor cursor = service.scan(request)) {
       List<ColumnRef> columns =
           resolveColumns(request.getNamespace(), request.getTable(), request.getColumnsList());
-      stream(cursor, columns, request.getBatchSize(), responseObserver);
+      stream(cursor, columns, request.getBatchSize(), request.getMaxVersions() > 1, responseObserver);
     } catch (HBaseAccessException e) {
       LOG.warn("Scan 失败: {}.{}", request.getNamespace(), request.getTable(), e);
       ErrorCode code = GatewayErrors.classify(e);
@@ -129,7 +129,7 @@ public final class HBaseDataServiceImpl extends HBaseDataServiceGrpc.HBaseDataSe
     try (ScanCursor cursor = service.batchGet(request)) {
       List<ColumnRef> columns =
           resolveColumns(request.getNamespace(), request.getTable(), request.getColumnsList());
-      stream(cursor, columns, 0, responseObserver);
+      stream(cursor, columns, 0, false, responseObserver);
     } catch (HBaseAccessException e) {
       LOG.warn("BatchGet 失败: {}.{}", request.getNamespace(), request.getTable(), e);
       ErrorCode code = GatewayErrors.classify(e);
@@ -160,7 +160,7 @@ public final class HBaseDataServiceImpl extends HBaseDataServiceGrpc.HBaseDataSe
 
   /** 逐批拉取 → 编码 → 推送；空批次表示结束，最后补一个 finished 标记。 */
   private void stream(
-      ScanCursor cursor, List<ColumnRef> columns, int requestedBatchSize,
+      ScanCursor cursor, List<ColumnRef> columns, int requestedBatchSize, boolean expandVersions,
       StreamObserver<ArrowBatch> responseObserver)
       throws HBaseAccessException {
     int batchSize = requestedBatchSize > 0 ? Math.min(requestedBatchSize, MAX_BATCH_SIZE) : DEFAULT_BATCH_SIZE;
@@ -171,7 +171,7 @@ public final class HBaseDataServiceImpl extends HBaseDataServiceGrpc.HBaseDataSe
         if (rows.isEmpty()) {
           break;
         }
-        Utf8ColumnarEncoder.EncodedBatch encoded = encoder.encode(columns, rows);
+        Utf8ColumnarEncoder.EncodedBatch encoded = encoder.encode(columns, rows, expandVersions);
         responseObserver.onNext(
             ArrowBatch.newBuilder()
                 .setIpcPayload(ByteString.copyFrom(encoded.payload()))

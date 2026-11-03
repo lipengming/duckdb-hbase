@@ -71,7 +71,7 @@
 
 | 字段 | 编号 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `ipc_payload` | 1 | `bytes` | Arrow IPC 数据载荷；**每个批次是一条完整的 IPC stream**（schema + 1 个 RecordBatch + EOS），客户端可逐批独立解码 |
+| `ipc_payload` | 1 | `bytes` | 数据载荷；内容由 `encoding` 决定。当前 `UTF8_COLUMNS` 为「magic + 列名 + 长度表 + 数据」，每批独立解码 |
 | `sequence_number` | 2 | `uint64` | 批次序号，用于顺序校验与续传 |
 | `finished` | 3 | `bool` | 是否为本次请求的最后一批 |
 | `row_count` | 4 | `uint64` | 本批行数 |
@@ -118,6 +118,13 @@
 | `HealthRequest` | — | — | — | 无字段 |
 | `HealthResponse` | `status` | 1 | `string` | `serving` / `not_serving` / `unknown` |
 | `HealthResponse` | `version` | 2 | `string` | Gateway 版本 |
+
+### 3.7.1 批次编码（`encoding`）
+
+| 值 | 说明 | 状态 |
+| --- | --- | --- |
+| `BATCH_ENCODING_UTF8_COLUMNS` | UTF8 列 + 长度表（大端，NULL=-1） | 当前默认 |
+| `BATCH_ENCODING_ARROW_IPC` | Arrow IPC stream（schema + RecordBatch + EOS） | 预留，见 ADR-001 |
 
 ### 3.8 类型映射（M1 约定）
 

@@ -66,16 +66,20 @@ def test_columns_required(connection):
     assert "columns" in str(info.value)
 
 
-def test_multi_version_rejected(connection):
-    """IT-EXT-12f：多版本展开未实现时必须报错。"""
+def test_multi_version_expands(connection):
+    """IT-EXT-12f：max_versions > 1 时按时间戳展开，并返回 __timestamp 列。"""
     sql = (
-        "SELECT * FROM hbase_scan("
-        f"{sql_literal(CONFIG.connection)}, {sql_literal(CONFIG.namespace)}, "
-        f"{sql_literal(CONFIG.table)}, max_versions := 3, columns := ['party:payer_id'])"
+        "SELECT \"cf2:score\", \"__timestamp\" FROM hbase_scan("
+        f"{sql_literal(CONFIG.connection)}, {sql_literal('duckdb_test')}, "
+        f"{sql_literal('customer_profile')}, start_row := 'r011', stop_row := 'r012', "
+        "columns := ['cf2:score'], max_versions := 3)"
     )
-    with pytest.raises(Exception) as info:
-        connection.execute(sql)
-    assert "多版本" in str(info.value)
+    rows = connection.fetchall(sql)
+    assert len(rows) >= 2, f"r011 应有多个版本，实际 {rows}"
+    values = {row[0] for row in rows}
+    assert {"11", "99"} <= values, values
+    timestamps = [row[1] for row in rows]
+    assert len(set(timestamps)) == len(timestamps), "同一 RowKey 的时间戳不应重复"
 
 
 def test_cache_true_rejected(connection):
