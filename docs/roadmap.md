@@ -200,7 +200,8 @@ M1 基础闭环（hbase_scan 通路）
 
 | # | 问题 | 影响 | 归属 |
 | --- | --- | --- | --- |
-| 1 | `IS NULL` / `FILTER` / `DISTINCT` 在扫描结果上求值不稳定（`count(col)` 正确但 `FILTER (col IS NULL)` 误判） | NULL 语义不可信，集成测试 1 项失败 | M1 收尾 |
+| 1 | **上游 DuckDB 2.0 缺陷**：扩展表函数输出上的 `FILTER (IS NULL)` / `DISTINCT (IS NULL)` 误判（`count(col)`、`WHERE col IS NULL` 均正确） | 直接聚合 NULL 结果不可信 | 待上游修复 |
+| 1.1 | 已最小复现：注册一个只返回常量列的测试表函数——单列 99 行时 `FILTER (IS NULL)` 报 37；两列时第一列报 37、第二列报 0；同样数据用内置 `read_csv` 完全正确 | 说明缺陷位于 DuckDB 与扩展表函数的交互层，不在 Extension 数据/validity 写入 | 附件：复现代码见下 |
 | 2 | HBase 按列扫描会跳过“没有任何匹配 cell”的行，NULL 不可观测 | 只查缺失列时行数偏少 | M1 收尾（自动附加定位列或文档约定） |
 | 3 | 数据面用自定义 UTF8 列式编码，未落地 Arrow IPC | 与设计基线的 `ArrowBatch.ipc_payload` 语义不完全一致 | M2 |
 | 4 | 列类型全部为 `VARCHAR`，无 BIGINT/DOUBLE/TIMESTAMP 映射 | 用户必须手写 CAST，聚合易错 | M1 收尾 |
@@ -210,6 +211,18 @@ M1 基础闭环（hbase_scan 通路）
 | 8 | 无 C++ 单元测试（仅 SQLLogicTest + Java 集成测试） | 覆盖索引/合并等纯逻辑难回归 | M3 前置 |
 | 9 | 扩展未签名、未发布到 Extension Repository | 用户必须 `LOAD` 本地文件 + `-unsigned` | M5 |
 | 10 | CI 中 vcpkg 编译 gRPC 耗时 30-60 分钟 | 反馈慢 | 持续优化（缓存/预编译） |
+
+### 缺陷 #1 最小复现（供上游 issue 使用）
+
+```cpp
+// 注册：TableFunction t("dbg", {BIGINT}, Execute, Bind);
+// Bind: 返回 1 列 VARCHAR/BIGINT；Execute: 写 n 行常量、全部有效
+SELECT count(*) c, count(v) nn, count(*) FILTER (WHERE v IS NULL) a FROM dbg(99);
+-- 期望 (99, 99, 0)，实际 (99, 99, 37)
+```
+
+对照：`SELECT count(*) FILTER (WHERE phone IS NULL) FROM read_csv(...)` 结果正确；`CREATE TABLE t AS SELECT ...` 后再聚合结果正确。
+规避方式：直接对表函数结果做 `FILTER (IS NULL)` 前先物化。
 
 ## 11. 版本与文档策略
 
