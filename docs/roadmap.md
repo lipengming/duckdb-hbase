@@ -200,7 +200,7 @@ M1 基础闭环（hbase_scan 通路）
 
 | # | 问题 | 影响 | 归属 |
 | --- | --- | --- | --- |
-| 1 | **上游 DuckDB 2.0 缺陷**：扩展表函数输出上的 `FILTER (IS NULL)` / `DISTINCT (IS NULL)` 误判（`count(col)`、`WHERE col IS NULL` 均正确） | 直接聚合 NULL 结果不可信 | 待上游修复 |
+| 1 | **上游 DuckDB 2.0 缺陷**：扩展表函数输出上的 `FILTER (IS NULL)` / `DISTINCT (IS NULL)` 误判（`count(col)`、`WHERE col IS NULL` 均正确） | 直接聚合 NULL 结果不可信 | 已提 issue [duckdb#28366](https://github.com/duckdb/duckdb/issues/28366)，待上游修复 |
 | 1.1 | 已最小复现：注册一个只返回常量列的测试表函数——单列 99 行时 `FILTER (IS NULL)` 报 37；两列时第一列报 37、第二列报 0；同样数据用内置 `read_csv` 完全正确 | 说明缺陷位于 DuckDB 与扩展表函数的交互层，不在 Extension 数据/validity 写入 | 附件：复现代码见下 |
 | 2 | HBase 按列扫描会跳过“没有任何匹配 cell”的行，NULL 不可观测 | 只查缺失列时行数偏少 | M1 收尾（自动附加定位列或文档约定） |
 | 3 | 数据面用自定义 UTF8 列式编码，未落地 Arrow IPC | 与设计基线的 `ArrowBatch.ipc_payload` 语义不完全一致 | M2 |
@@ -212,7 +212,7 @@ M1 基础闭环（hbase_scan 通路）
 | 9 | 扩展未签名、未发布到 Extension Repository | 用户必须 `LOAD` 本地文件 + `-unsigned` | M5 |
 | 10 | CI 中 vcpkg 编译 gRPC 耗时 30-60 分钟 | 反馈慢 | 持续优化（缓存/预编译） |
 
-### 缺陷 #1 最小复现（供上游 issue 使用）
+### 缺陷 #1 最小复现（已提交 [duckdb#28366](https://github.com/duckdb/duckdb/issues/28366)）
 
 ```cpp
 // 注册：TableFunction t("dbg", {BIGINT}, Execute, Bind);
