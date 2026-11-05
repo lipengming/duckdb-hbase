@@ -1,6 +1,7 @@
 {
         "dependencies": [
-                "grpc"
+                "grpc",
+                "sqlite3"
         ],
         "vcpkg-configuration": {
                 "overlay-ports": [
