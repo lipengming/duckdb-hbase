@@ -1,0 +1,93 @@
+# name: test/sql/hbase_cache.test
+# description: 缓存管理函数与配置项（不依赖 Gateway 运行）
+# group: [sql]
+
+require hbase
+
+# 缓存统计：即使没有任何段也必须能执行，且列定义稳定
+query I
+SELECT count(*) FROM hbase_cache_stats();
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT * FROM hbase_cache_stats()) t;
+----
+0
+
+# 输出列（docs/cache-design.md §9.1）必须齐备：没有数据行时通过 DESCRIBE 校验 schema
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM hbase_cache_stats()) t;
+----
+12
+
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM hbase_cache_stats()) t
+WHERE column_name IN ('namespace', 'table_name', 'segments', 'rows', 'bytes', 'expired_segments',
+                      'full_hit_count', 'partial_hit_count', 'miss_count', 'remote_scan_count',
+                      'remote_get_count', 'write_error_count');
+----
+12
+
+# 清理全库：没有段时返回 0，不报错
+query I
+SELECT removed_segments FROM hbase_cache_clear();
+----
+0
+
+# 清理单表（2 参数）与方案示例签名（3 参数）都可执行
+query I
+SELECT removed_segments FROM hbase_cache_clear('default', 'nope');
+----
+0
+
+query I
+SELECT removed_segments FROM hbase_cache_clear('prod', 'default', 'nope');
+----
+0
+
+# 缓存目录指向测试用相对路径，避免污染默认目录
+statement ok
+SET hbase_cache_directory = 'duckdb_hbase_cache_test';
+
+statement ok
+SET hbase_cache_mode = 'file';
+
+statement ok
+SET hbase_cache_ttl = 60;
+
+statement ok
+SET hbase_cache_enabled = false;
+
+# 关闭缓存后统计仍可观测
+query I
+SELECT count(*) FROM hbase_cache_stats();
+----
+0
+
+statement ok
+SET hbase_cache_enabled = true;
+
+# 非法存储模式：显式报错，不做静默降级（ADR-002）
+statement ok
+SET hbase_cache_mode = 'parquet';
+
+statement error
+SELECT * FROM hbase_cache_stats();
+----
+hbase_cache_mode
+
+statement ok
+SET hbase_cache_mode = 'file';
+
+# 负 TTL 显式报错
+statement ok
+SET hbase_cache_ttl = -1;
+
+statement error
+SELECT * FROM hbase_cache_stats();
+----
+hbase_cache_ttl
+
+statement ok
+SET hbase_cache_ttl = 300;
