@@ -6,8 +6,9 @@
 
 ## 1. 当前状态
 
-- 设计阶段已完成：`tech_v0.1.md`（V1.0，13 章）为唯一设计基线，覆盖架构、模块、Provider 协议、缓存、部署、分包与里程碑。
-- 代码与测试基础设施尚未开始：`extension/`、`gateway/`、`protocol/` 无构建系统与可编译产物，测试策略见 [testing.md](testing.md)，自 M1 起逐步落地。
+- 设计阶段已完成：`tech_v0.1.md`（V1.0，13 章）为唯一设计基线，覆盖架构、模块、Provider 协议、缓存、部署、分包与里程碑；实现期间的偏离记录在同文件附录 A（ADR-001/002/003）。
+- M1/M2 已完成主体交付（gRPC + Protobuf + UTF8 列式数据面、并行扫描、取消与错误模型）。
+- **M3 进行中**：缓存闭环（覆盖索引、段文件、SQLite 元数据、Full Hit、TTL、统计）已落地并有 C++ 单测；Parquet 物理格式因构建约束延后（ADR-002），Partial Hit 属 M4。
 - 已确认的边界：第一阶段只读、不实现 DuckDB Catalog、Extension 只依赖 `RemoteScanProvider`、缓存属于 Extension。
 - 已锁定的选型：C++ Extension、Java Gateway、gRPC + Protobuf + Arrow IPC、Parquet 缓存 + SQLite 元数据、CMake + Maven 分离构建。
 
@@ -90,27 +91,28 @@
 
 关键任务：
 
-- [ ] 定义 `ScanPlan`、`CacheLookupResult`、`SegmentDescriptor` 等核心数据结构
-- [ ] 实现 Segment 划分与 `CacheSegmentManager`
-- [ ] 实现 `CacheCoverageIndex`：范围、列、时间戳语义、TTL 的覆盖判定
-- [ ] 实现 `ParquetCacheStorage`（CreateWriter / OpenReader / DeleteSegment）
-- [ ] 实现 SQLite 元数据表（`cache_segment`、`cache_segment_column`）与 staging + 原子 Metadata Commit
-- [ ] 实现 Full Hit 读取路径，命中时完全不访问 Gateway，且 LIMIT 不影响缓存完整性
-- [ ] 实现 TTL 与 `CacheInvalidationManager` 的过期失效
-- [ ] 实现 `hbase_cache_stats()` / `hbase_cache_clear()` 与相关 `SET` 配置
-- [ ] 补充覆盖索引、存储损坏、原子提交的单测
+- [x] 定义 `ScanPlan`、`CacheLookupResult`、`SegmentDescriptor` 等核心数据结构（`cache/cache_types.hpp`，含 `RowKeyRange`、`ScanConsistency`、`SegmentCoverage`）
+- [x] 实现 Segment 划分与段生命周期（`CacheWriteSession` + `ICacheStorage`；原方案的独立 `CacheSegmentManager` 收敛进 `CacheManager`，见 `docs/cache-design.md` §3）
+- [x] 实现覆盖判定：范围、列、时间戳语义、TTL、状态五项条件（`cache/cache_coverage_index.cpp`，纯函数 + 21 个单测）
+- [ ] 实现 `ParquetCacheStorage`（**延后**：DuckDB 未把 in-tree parquet 链接进 `libduckdb`，loadable extension 无法直接使用，见 `tech_v0.1.md` ADR-002；M3 用自研 `DHBSEG01` 段文件 + `MemoryCacheStorage`）
+- [x] 实现 SQLite 元数据表（`cache_segment`、`cache_segment_column`；`namespace`+`table_name` 替代 `table_id`，见 ADR-003）与 staging + 原子 Metadata Commit
+- [x] 实现 Full Hit 读取路径，命中时完全不访问 Gateway，且 LIMIT 不影响缓存完整性（`hbase_scan` 命中/未命中双路径 + 写会话析构即 Abort）
+- [x] 实现 TTL 与过期失效（过期段不参与覆盖、不可打开；物理回收见 `hbase_cache_clear`）
+- [x] 实现 `hbase_cache_stats()` / `hbase_cache_clear()` 与 `SET hbase_cache_*` 配置（含 3 参数兼容签名）
+- [x] 补充覆盖索引、存储损坏、原子提交的单测（`extension/test/unit/`，Catch2 单头文件，无新依赖）
 
 退出标准（DoD）：
 
-- [ ] 相同查询第二次执行时远端 Scan 次数为 0
-- [ ] 覆盖判定按 HBase 字节序比较，边界用例（相邻、重叠、包含、单字节缺口）通过
-- [ ] 违反完整命中五项条件时不会误判为 Full Hit
-- [ ] 进程崩溃后元数据可恢复，未提交 Segment 不可见
-- [ ] 缓存命中率、远端 Scan 次数、内存占用可被观测
+- [x] 相同查询第二次执行时远端 Scan 次数为 0（单测覆盖 Lookup 命中 + 扫描层命中路径不建远端流；真实 HBase 端到端待环境回归）
+- [x] 覆盖判定按 HBase 字节序比较，边界用例（相邻、重叠、包含、单字节缺口、无界）通过
+- [x] 违反完整命中五项条件时不会误判为 Full Hit（状态/过期/一致性/列集合/范围超界各有单测）
+- [x] 进程崩溃后元数据可恢复，未提交 Segment 不可见（staging 清理 + 非 COMMITTED 记录清理 + WAL/FULL 同步）
+- [x] 缓存损坏可自动回退：打开段即整段校验（footer + 逐块 CRC + 块数/行数），损坏段标记 INVALID 并整体回源，下次查询自动重建（本机 HBase 2.6.6 + Gateway 实测通过）
+- [x] 缓存命中率、远端 Scan 次数、缓存字节数可被观测（`hbase_cache_stats()` 列已定稿）；进程内存占用（RSS）未暴露，记为 TBD
 
 风险与缓解：
 
-- 覆盖索引算法复杂（方案列为待解决实现问题之一）：先实现单 Segment 单范围，再多 Segment 多范围，逐步加复杂度。
+- 覆盖索引算法复杂（方案列为待解决实现问题之一）：先实现单 Segment 单范围，再多 Segment 多范围，逐步加复杂度。（M3 已按"请求范围切分 + 贪心拼接"收敛，见 `docs/cache-design.md` §12.1）
 - Parquet 与元数据不一致：以 staging + 原子提交为唯一写入路径，禁止旁路写文件。
 - 缓存误命中导致数据错误：命中判定失败时一律回退 Cache Miss。
 
@@ -192,7 +194,7 @@ M1 基础闭环（hbase_scan 通路）
 
 1. DuckDB Extension 的 Scan API 实现：Table Function 的 Projection Pushdown、Filter Pushdown、Global/Local State 与并行 Scan 的具体实现（阻塞 M1）。
 2. Provider Protocol 的正式定义：Protobuf、Arrow IPC、错误模型、能力协商与 Gateway Adapter SPI，避免 C++ 与 Java 两套模型不一致（阻塞 M2）。
-3. Cache Coverage Index 的算法：多 Segment、多列、多 RowKey 范围之间的覆盖关系（阻塞 M3）。
+3. ~~Cache Coverage Index 的算法：多 Segment、多列、多 RowKey 范围之间的覆盖关系（阻塞 M3）。~~ 已在 M3 收敛为"按请求范围切分 + 贪心无缺口拼接"，结论见 `docs/cache-design.md` §12.1。
 
 ## 10. 已知缺陷与技术债
 
@@ -208,9 +210,11 @@ M1 基础闭环（hbase_scan 通路）
 | 5 | 多版本未展开（`max_versions > 1` 报错） | 无法做版本对比 | M2 |
 | 6 | `hbase_connect` 只支持端点字符串，无 JSON 配置 / 超时 / TLS / 认证 | 生产可用性不足 | M2/M5 |
 | 7 | 单线程扫描、无 Filter Pushdown、无 RowKey 区间切分 | 大范围查询吞吐受限 | M2 |
-| 8 | 无 C++ 单元测试（仅 SQLLogicTest + Java 集成测试） | 覆盖索引/合并等纯逻辑难回归 | M3 前置 |
+| 8 | ~~无 C++ 单元测试（仅 SQLLogicTest + Java 集成测试）~~ | 覆盖索引/合并等纯逻辑难回归 | 已闭环：`extension/test/unit/`（Catch2 单头文件，`make unit`） |
 | 9 | 扩展未签名、未发布到 Extension Repository | 用户必须 `LOAD` 本地文件 + `-unsigned` | M5 |
 | 10 | CI 中 vcpkg 编译 gRPC 耗时 30-60 分钟 | 反馈慢 | 持续优化（缓存/预编译） |
+| 11 | 数据面不返回 RowKey（批次里只有请求列） | 缓存只能按"请求范围"判定覆盖，无法按 RowKey 裁剪段内行；M4 的 BatchGet 补列与 RowKey Merger 无法实现 | **M4 前置**：Gateway 批次追加 `__rowkey` 列（协议 + 编码 + 缓存段格式 v2） |
+| 12 | 缓存段为自研 `DHBSEG01` 而非 Parquet | 缓存文件不能被 Parquet 工具读取 | M3 收尾：见 ADR-002 回退条件 |
 
 ### 缺陷 #1 最小复现（已提交 [duckdb#28366](https://github.com/duckdb/duckdb/issues/28366)）
 

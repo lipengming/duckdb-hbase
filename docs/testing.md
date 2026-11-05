@@ -15,7 +15,7 @@
 
 | 层级 | 范围 | 依赖 | 运行时机 | 技术栈 |
 | --- | --- | --- | --- | --- |
-| 单元测试 | RowKey、ScanPlanner、Coverage Index、Merger、Storage、Provider 能力协商 | 无外部服务；Fake Provider 与内存 Storage 替代 Gateway / 文件系统 | 每次提交与 PR，全量 | C++ 单元测试框架（TBD）、JUnit（Java） |
+| 单元测试 | RowKey、ScanPlanner、Coverage Index、Merger、Storage、Provider 能力协商 | 无外部服务；Fake Provider 与内存 Storage 替代 Gateway / 文件系统 | 每次提交与 PR，全量 | C++：DuckDB 自带 Catch2 单头文件（`extension/test/unit/`，`make unit`）；Java：JUnit |
 | SQL 测试 | `hbase_scan`、`hbase_get`、`hbase_cache_*` 的 SQL 语义 | 本地 Extension + 可回放的录制数据 Provider | 每次 PR | DuckDB SQL Tests |
 | 集成测试 | Extension + 真实 Gateway + 真实 HBase 2.x | HBase 2.x 集群、Gateway 进程、Parquet 缓存目录 | PR 跑 smoke 子集，nightly 跑全量 | 脚本驱动 SQL Tests + JUnit |
 | 性能测试 | §9.3 四组对比场景与七项指标 | 固定规模数据集、固定硬件、禁用其他负载 | nightly 与发布前 | 基准脚本 + 结果归档 |
@@ -40,6 +40,16 @@
 - `RowKeyRanges` 计算：单范围、多范围、无范围（全表）、与投影/过滤的组合。
 - `LIMIT` 不得改变缓存写入范围；带 LIMIT 的查询不得产出"标记为完整范围"的 Segment。
 - `ScanConsistency` 写入 ScanPlan 后与 Cache Lookup 的键一致。
+
+### 3.2.1 C++ 单元测试的组织与运行
+
+- 目录：`extension/test/unit/`，每个文件一个主题；入口 `main.cpp` 用 `CATCH_CONFIG_MAIN`。
+- 构建目标：`hbase_unit_tests`（`extension/CMakeLists.txt`，`HBASE_BUILD_UNIT_TESTS=ON` 默认开启）。
+- 运行：`make unit`（等价 `cmake --build build/release --target hbase_unit_tests && ./build/release/extension/hbase/hbase_unit_tests`）。
+- 不引入新依赖：复用 DuckDB 自带的 `duckdb/third_party/catch/catch.hpp`；测试直接用 `FileSystem::CreateLocal()` 和临时目录，不需要 HBase / Gateway。
+- 覆盖范围（M3）：覆盖索引 21 例、段文件往返/损坏（截断、位翻转、打开即校验）/staging 清理、SQLite 元数据提交与崩溃残留、`CacheManager` 命中闭环（含 TTL、失效、统计、memory 模式）。
+- 未覆盖项：本轮验证使用 DuckDB CLI 手工端到端脚本；当前环境未安装 pytest，`integration/tests/test_extension_cache.py`（IT-CACHE-08~10）未执行，需在装好 pytest 的环境或 CI 中补跑。
+- 端到端验证记录（2026-11，本机 HBase 2.6.6 + Gateway）：首次查询 5 个分区远端 Scan → 写 5 段；同参数第二次查询 `remote_scan_count` 增量为 0；列集合变化回源；`cache := false` 不读不写；TTL 到期后 `expired_segments` 上升且回源；人为翻转段文件字节后查询整体回源且结果正确，第三次查询重新命中；`hbase_cache_clear()` 后命中归零。
 
 ### 3.3 Coverage Index / Cache Lookup
 
@@ -165,7 +175,7 @@
   `hbase_scan` 数据面未实现（M1 进行中）时，用例 **skip 并打印修复命令**，不误报为产品缺陷；
   实现完成后自动开始执行，无需修改测试；
 - 全表计数、30 天逐日分页等大范围用例标记 `slow`，默认跳过，`--runslow` 开启；
-- `hbase_cache_stats()` 输出列仍是 TBD，缓存用例按列名关键字识别计数列，识别不到时 skip；
+- `hbase_cache_stats()` 输出列已在 `docs/cache-design.md` §9.1 定稿，集成用例仍按列名关键字识别计数列，识别不到时 skip（保持向前兼容）；
 - 详细的数据模型、三档切换、CLI、环境变量与已知限制见 [`integration/README.md`](../integration/README.md)。
 
 ## 6. 正确性测试重点

@@ -25,7 +25,7 @@
 | --- | --- | --- |
 | Segment | 覆盖某 RowKey 区间与某列集合的列式文件，是缓存基本单元 | `segment_id`、`start_row`、`stop_row`、`row_count`、`file_path` |
 | Coverage Index | 记录哪些 RowKey 范围、哪些列已被缓存的索引 | `CacheCoverageIndex` 维护，`CacheLookupEngine` 查询 |
-| Segment Manifest | 描述 Segment 的清单；方案中仅以源文件 `segment_manifest.cpp` 出现 | 记录内容待定（TBD），见 §7.2 |
+| Segment Manifest | 描述 Segment 的清单；方案中仅以源文件 `segment_manifest.cpp` 出现 | M3 未单独落盘：列清单与一致性语义存于 `cache_segment` / `cache_segment_column`，启动时由元数据重建内存视图（结论见 §7.2） |
 | Metadata | 独立小型本地数据库（SQLite）中的段元数据 | 表 `cache_segment`、`cache_segment_column` |
 | RowKey Range | 二进制区间，边界语义与 HBase 一致 | `RowKey` = `vector<uint8_t>`；`RowKeyRange{start, stop, include_start, include_stop}` |
 | Column Set | 按 `family:qualifier` 归一的列集合，分已缓存与缺失两种视图 | `available_columns`、`missing_columns`、`logical_type` |
@@ -155,7 +155,22 @@ Cache Segment
     └── <metadata 数据库文件>     # SQLite
 ```
 
-文件命名规则、是否按表/日期/世代分目录、临时文件与正式文件的区分方式，方案均未规定，属待定（TBD）。定案需要：同表并发写入时文件名唯一性规则、崩溃恢复如何识别 staging 文件、`hbase_cache_clear` 如何按路径前缀批量删除。
+### 7.1 M3 落地布局（定案）
+
+```
+<hbase_cache_directory>/
+├── metadata.db                 # SQLite：cache_segment / cache_segment_column（WAL + synchronous=FULL）
+├── segments/<segment_id>.seg   # 已提交段数据文件
+└── staging/<segment_id>.tmp    # 写入中；Finish 时 rename 到 segments/，崩溃残留由 CleanupStaging 清理
+```
+
+- 段 ID 由"毫秒时间戳 + 随机位 + 进程内自增"构成，跨进程/同毫秒唯一，因此无需按表分目录。
+- 崩溃恢复：`staging/*` 全部视为半成品删除；`cache_segment` 中非 `COMMITTED` 的记录连同文件一并清理。
+- `hbase_cache_clear` 按元数据逐个删除文件，不依赖路径前缀。
+
+段文件格式（`DHBSEG01`，见 `storage/segment_file_storage.cpp` 头注释）：前置 magic、若干块（`u32 rows | u32 payload_size | payload | u32 crc32`）、footer（版本 / block_rows / 总行数 / 块数 / 列清单 + CRC32 + 长度 + magic）。payload 逐列写 validity 位图、长度表与拼接数据。所有整数小端，行数、长度表、数据长度三者不一致即判定损坏。
+
+> 与方案 §2.7 的 Parquet 差异及理由见 `tech_v0.1.md` 附录 A ADR-002。
 
 `cache_segment` 字段：`segment_id`、`table_id`、`start_row` / `stop_row`（BLOB）、`row_count`、`created_at`、`expires_at`、`generation`、`file_path`、`status`。`cache_segment_column` 字段：`segment_id`、`family`、`qualifier`、`logical_type`，主键 `(segment_id, family, qualifier)`。`status` 取值与 §8 失败恢复四态的映射待定。
 
@@ -197,7 +212,7 @@ INIT --> WRITING --> VALIDATING --> COMMITTED
 
 ## 9. 统计与可观测指标
 
-`ICacheManager::GetStatistics()` 对应 SQL 的 `hbase_cache_stats()`；该函数输出列名方案未给出，属待定（TBD）。可引用的指标命名来自性能测试章节：
+`ICacheManager::GetStatistics()` 对应 SQL 的 `hbase_cache_stats()`；输出列已在 §9.1 定稿（方案原文未给出，属 M3 收敛项）。可引用的指标命名来自性能测试章节：
 
 | 指标 | 归属 | 说明 |
 | --- | --- | --- |
@@ -211,6 +226,25 @@ INIT --> WRITING --> VALIDATING --> COMMITTED
 
 `hbase_cache_stats()` 至少应能回答：各表 Segment 数、覆盖的 RowKey 区间与列、总字节数、过期与失效段数；具体列与类型待与 [user-guide.md](user-guide.md) 的输出示例对齐后固定。
 
+### 9.1 `hbase_cache_stats()` 输出列（M3 定稿）
+
+| 列 | 类型 | 含义 |
+| --- | --- | --- |
+| `namespace` | VARCHAR | HBase namespace |
+| `table_name` | VARCHAR | 表名 |
+| `segments` | BIGINT | 未过期的 COMMITTED 段数 |
+| `rows` | BIGINT | 上述段的行数合计 |
+| `bytes` | BIGINT | 上述段的段文件字节数合计 |
+| `expired_segments` | BIGINT | 已过期但尚未物理回收的段数 |
+| `full_hit_count` | BIGINT | 本会话 Full Hit 次数 |
+| `partial_hit_count` | BIGINT | 本会话 Partial Hit 次数（M3 恒为 0） |
+| `miss_count` | BIGINT | 本会话 Cache Miss 次数 |
+| `remote_scan_count` | BIGINT | 本会话远端 Scan 次数 |
+| `remote_get_count` | BIGINT | 本会话远端 BatchGet 次数（M3 恒为 0） |
+| `write_error_count` | BIGINT | 本会话缓存写入失败次数（查询结果不受影响） |
+
+统计按表一行；跨表求和即全局口径（集成测试按列名关键字求和断言，列名保持不变）。
+
 ## 10. 容量管理与淘汰
 
 - 容量上限由 `hbase_cache_max_size` 配置（示例 `'10GB'`）。
@@ -223,16 +257,63 @@ INIT --> WRITING --> VALIDATING --> COMMITTED
 
 | SQL | 行为 | 涉及组件 |
 | --- | --- | --- |
-| `hbase_cache_stats()` | 查看缓存统计 | `CacheManager::GetStatistics()` |
-| `hbase_cache_clear()` | 清理所有缓存 | `CacheInvalidationManager` 全量失效 |
-| `hbase_cache_clear('prod','default','customer_profile')` | 清理单表缓存 | `Invalidate(table, nullopt)` |
-| `hbase_scan(..., cache := true)` | 单次查询是否使用缓存 | `ScanPlan.allow_cache` / `CachePolicy` |
+| `hbase_cache_stats()` | 查看缓存统计（列定义见 §9.1） | `CacheManager::GetStatistics()` |
+| `hbase_cache_clear()` | 清理所有缓存 | `CacheManager::InvalidateAll()` |
+| `hbase_cache_clear(namespace, table)` | 清理单表缓存 | `CacheManager::InvalidateTable()` |
+| `hbase_cache_clear(connection, namespace, table)` | 与方案 §4.2 示例签名一致；缓存属于进程本地，连接名仅用于签名兼容 | `CacheManager::InvalidateTable()` |
+| `hbase_scan(..., cache := true)` | 单次查询是否使用缓存（默认 true） | `ScanPlan.allow_cache` |
 | `SET hbase_cache_enabled` | 全局开关，优先于单查询参数 | Lookup 第 0 步 |
-| `SET hbase_cache_ttl` | 新 Segment 的 TTL | `expires_at` 计算 |
-| `SET hbase_cache_max_size` | 容量上限 | `CacheEvictionManager` |
-| `SET hbase_cache_directory` | 缓存根目录 | `ParquetCacheStorage` |
-| `SET hbase_cache_mode` | 存储模式，示例 `'parquet'` | `ParquetCacheStorage` / `MemoryCacheStorage` |
+| `SET hbase_cache_ttl` | 新 Segment 的 TTL（秒，0 表示永不过期） | `expires_at` 计算 |
+| `SET hbase_cache_max_size` | 容量上限（**M3 仅登记不执行**，淘汰在 M5） | `CacheEvictionManager`（未实现） |
+| `SET hbase_cache_directory` | 缓存根目录 | `SegmentFileStorage` / `CacheMetadataStore` |
+| `SET hbase_cache_mode` | `file`（默认）/ `memory`；`parquet` 显式报错（ADR-002） | `ICacheStorage` 工厂 |
 
-函数注册入口为 `HBaseExtension::Load()` 中的 `RegisterCacheFunctions()` 与 `RegisterConfiguration()`，实现文件为 `sql/hbase_cache_functions.cpp`。`Invalidate` 支持范围参数，而 SQL 仅示例表级与全库调用；范围级清理由哪个函数承载待定（TBD）。
+函数注册入口为 `HBaseExtension::Load()` 中的 `RegisterCacheFunctions()` 与 `cache::RegisterCacheConfiguration()`，实现文件为 `sql/hbase_cache_functions.cpp`。
 
-上述待定项需在实现前收敛，落地节奏见 [roadmap.md](roadmap.md) 的 M3（Segment / Coverage Index / Parquet / Metadata / Full Hit / TTL / 统计）与 M4（Partial Hit / BatchGet / RowKey Merger / Copy-on-Write / 并发合并）。
+## 12. M3 实现记录（2026-11）
+
+本节记录 M3 落地时对 §5-§10 中 "待定（TBD）" 项的收敛结果，未在此列出的仍为待定。
+
+### 12.1 已定案
+
+| 待定项 | M3 结论 | 理由 |
+| --- | --- | --- |
+| Segment 切分粒度 | **按 Scan 请求范围切分**（并行扫描时按分区切分，分区本身是请求范围的连续子区间） | 数据面当前不返回 RowKey（见 §12.3），无法按真实行边界切分；按请求范围切分可保证"段 ⊆ 请求范围"，读出的行不会越界 |
+| 边界语义 | 只缓存 **左闭右开**（`include_stop = false`）的请求；`include_stop = true` 一律绕过缓存 | 半开段无法无损表达闭区间端点 |
+| 多 Segment 重叠 | 贪心选"能接上游标且 stop 最大"的段；只使用**范围 ⊆ 请求范围**的段 | 结果确定，且不会读出请求范围之外的行 |
+| 部分命中（M3） | 不实现。任何缺口/缺列一律 `MISS`，整段回源 | M3 目标是 Full Hit 闭环；Partial 属 M4 |
+| 段列集合 | 必须包含全部 RequiredColumns（按 family/qualifier/logical_type 比较） | 列类型不同不得复用 |
+| 时间戳语义 | 只复用 `max_versions = 1` 且未指定 `timestamp_min/max` 的段 | 保守策略，无法证明兼容就回源 |
+| 索引形态 | 每次 Lookup 从 SQLite 读取该表全部段的元数据（分段数据量小），在内存里求解覆盖计划 | 避免跨连接/跨进程的索引陈旧；覆盖求解是纯函数，可直接单测 |
+| 过期清理时机 | 惰性：过期段不参与覆盖、不被打开；**物理删除**发生在 `hbase_cache_clear` 与 M5 淘汰 | 让 `hbase_cache_stats()` 持续报告过期段数 |
+| `status` 取值 | `INIT / WRITING / VALIDATING / COMMITTED / INVALID`（ADR-003） | 损坏段需要保留排障信息但不可复用 |
+| 完整性校验 | 打开即整段校验：文件大小与元数据一致 + 文件 magic + footer CRC32 + 逐块 CRC32 + 块数/行数与 footer 一致；读取时再按块校验一遍 | 无外部依赖，可覆盖截断、位翻转与半写。代价是命中路径多一次顺序读，换来"绝不会读到一半才发现损坏" |
+| `hbase_cache_stats()` 列 | 见 §9.1 | 与集成测试按列名关键字识别的策略兼容 |
+
+### 12.2 数据流（M3 实际实现）
+
+```
+hbase_scan Bind
+  └── ScanPlan{range, required_columns, consistency, allow_cache}
+        │
+InitGlobal
+  ├── CacheManager::Lookup → ComputeCacheLookup(纯函数)
+  │      ├── FULL_HIT → 逐个 OpenReader（全部成功才走命中路径；任一段损坏则标 INVALID 并整体回源）
+  │      └── MISS     → BuildPartitions（并行扫描分区）
+  │
+Execute（每个线程）
+  ├── 命中：ICacheSegmentReader::Next → DataChunk（不访问 Provider，不计数远端 Scan）
+  └── 未命中：RemoteScanStream → DecodeColumnarBatch → DataChunk
+                └── 同时 tee 到 CacheWriteSession：Append 全列批次
+                      ├── 分区正常结束 → Finish（rename 发布 + 单事务提交元数据）
+                      └── LIMIT / 取消 / 析构 → Abort（删除 staging，不留半成品段）
+```
+
+### 12.3 已知限制与前置条件
+
+- **数据面不返回 RowKey**：`hbase_scan` 的输出与缓存段内都没有 RowKey 列，因此 M3 只能按"请求范围"而不是"真实行范围"判定覆盖，也**无法**按 RowKey 裁剪段内行。M4 的 BatchGet 补列与 RowKey Merger 需要先让 Gateway 在批次中附加 `__rowkey` 列（列为 M4 前置任务，见 `docs/roadmap.md` §10 技术债 #11）。
+- **Parquet 未落地**：见 `tech_v0.1.md` 附录 A ADR-002，`hbase_cache_mode='parquet'` 显式报错。
+- **无淘汰**：`hbase_cache_max_size` 仅登记，容量淘汰在 M5。
+- **无并发写入合并**：Segment Lock / Column Lock / SingleFlight / Generation CAS 属 M4；M3 依赖"段 ID 唯一 + 单事务提交"，并发写同一范围只会产生多条互不覆盖的段（覆盖判定仍正确，只是命中率下降）。
+- **损坏段的处理**：命中段在 `InitGlobal` 打开阶段被判定损坏时，整体回源（不会读到一半失败），该段标记 `INVALID` 并删除数据文件，同时把这次 Lookup 记成 Miss（`full_hit_count` 回退、`miss_count` +1），避免统计把一次失败命中算成命中。
+- **命中路径 I/O 翻倍**：打开段时做整段校验，命中读取代价约为"纯读"的 2 倍（顺序读，页缓存命中后开销很小）。若后续需要优化，可改为在元数据中登记整段校验和，按需跳过逐块校验。

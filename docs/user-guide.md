@@ -78,21 +78,32 @@ SELECT hbase_connect('prod', '{"endpoint": "grpc://127.0.0.1:18080", "timeout_ms
 | `max_versions` | INTEGER | 1 | 返回的最大版本数；M1 只支持 1，>1 报错 |
 | `timestamp_min` | BIGINT | NULL | 时间戳下界 |
 | `timestamp_max` | BIGINT | NULL | 时间戳上界 |
-| `cache` | BOOLEAN | NULL | 本次查询是否使用缓存；M1 缓存未实现，显式 `true` 会报错 |
+| `cache` | BOOLEAN | true（省略时） | 本次查询是否使用缓存；`false` 强制走远端且**不写**缓存 |
 
 第一版区间为左闭右开；RowKey 是二进制字节数组，不能一律按 UTF-8 字符串处理，否则会破坏排序与范围比较语义。`cache` 控制单次查询，全局开关见 3.3。
 
 ### 3.3 缓存配置
 
 ```sql
-SET hbase_cache_enabled = true;
-SET hbase_cache_ttl = 300;
-SET hbase_cache_max_size = '10GB';
-SET hbase_cache_directory = './hbase_cache';
-SET hbase_cache_mode = 'parquet';
+SET hbase_cache_enabled = true;      -- 全局开关（默认 true）
+SET hbase_cache_ttl = 300;           -- 新段有效期，秒；0 表示永不过期（默认 300）
+SET hbase_cache_directory = './hbase_cache';  -- 缓存根目录（默认 ./hbase_cache）
+SET hbase_cache_mode = 'file';       -- file（默认）| memory；parquet 暂不支持（见 roadmap）
+SET hbase_cache_max_size = '10GB';   -- 仅登记，容量淘汰在 M5 实现
 ```
 
-各配置项默认值待定（TBD），方案示例值依次为：`hbase_cache_enabled` 布尔全局开关（true）、`hbase_cache_ttl` 秒级有效期（300）、`hbase_cache_max_size` 容量上限（`10GB`）、`hbase_cache_directory` 缓存目录（`./hbase_cache`）、`hbase_cache_mode` 存储模式（`parquet`）。`cache` 参数与全局开关同时为真才启用缓存。
+`cache` 参数与全局开关同时为真才启用缓存。以下情形**既不读也不写**缓存（保守回源，不会误命中）：`max_versions > 1`、指定了 `timestamp_min` / `timestamp_max`、`stop_row` 为闭区间。
+
+命中规则（M3）：请求的 RowKey 范围与列集合必须被已提交且未过期的段**无缺口、无越界**地完整覆盖，才算 Full Hit；任何缺口或缺少任一列都回源（增量补列属 M4）。
+
+缓存目录结构：
+
+```
+./hbase_cache/
+├── metadata.db                # 段元数据（SQLite）
+├── segments/<segment_id>.seg  # 段数据文件
+└── staging/<segment_id>.tmp   # 写入中，提交前不可见；崩溃残留会被自动清理
+```
 
 ## 4. 查询示例
 
@@ -169,14 +180,41 @@ FROM hbase_scan('prod', 'default', 'customer_profile',
 ### 5.3 缓存管理
 
 ```sql
+-- 每张表一行；跨表求和即全局口径
 SELECT * FROM hbase_cache_stats();
 
-SELECT hbase_cache_clear('prod', 'default', 'customer_profile');
-
+-- 三种清理方式：全库 / 单表 / 方案示例签名
 SELECT hbase_cache_clear();
+SELECT hbase_cache_clear('default', 'customer_profile');
+SELECT hbase_cache_clear('prod', 'default', 'customer_profile');
 ```
 
-`hbase_cache_stats()` 的输出列方案未定义（TBD）。缓存失效包含 TTL 与手动失效，后续支持 CDC 失效。
+`hbase_cache_stats()` 输出列（`docs/cache-design.md` §9.1）：
+
+| 列 | 含义 |
+| --- | --- |
+| `namespace` / `table_name` | 表标识 |
+| `segments` / `rows` / `bytes` | 未过期段的数量、行数、字节数 |
+| `expired_segments` | 已过期但尚未物理回收的段数 |
+| `full_hit_count` / `partial_hit_count` / `miss_count` | 本会话命中情况（`partial_hit_count` 在 M3 恒为 0） |
+| `remote_scan_count` / `remote_get_count` | 本会话远端 Scan / BatchGet 次数（后者 M3 恒为 0） |
+| `write_error_count` | 缓存写入失败次数；写缓存失败不影响查询结果 |
+
+典型排查：先 `SELECT * FROM hbase_cache_stats()` 看 `full_hit_count` / `remote_scan_count` 是否按预期变化；命中率低通常是"范围或列集合每次都不一样"或"TTL 太短"。缓存失效包含 TTL 与手动失效，CDC 失效属后续能力。
+
+示例：确认第二次查询不再访问 HBase。
+
+```sql
+-- 第一次：Cache Miss，远端 Scan 计数 +1，并写入段
+SELECT count(*) FROM hbase_scan('prod', 'default', 'customer_profile',
+    start_row := '1000', stop_row := '2000', columns := ['info:name', 'info:age']);
+SELECT remote_scan_count, full_hit_count FROM hbase_cache_stats();
+
+-- 第二次：同样参数 -> Full Hit，remote_scan_count 不变
+SELECT count(*) FROM hbase_scan('prod', 'default', 'customer_profile',
+    start_row := '1000', stop_row := '2000', columns := ['info:name', 'info:age']);
+SELECT remote_scan_count, full_hit_count FROM hbase_cache_stats();
+```
 
 ## 6. Python API 示例
 
@@ -199,7 +237,8 @@ print(result)
 | --- | --- | --- |
 | 连接失败 | Gateway 未启动；`endpoint` 主机或端口错误；连接名不一致 | 先执行 `curl http://<host>:18080/health`；确认 `hbase_scan` 的第一个参数与注册名一致；重新注册连接 |
 | Gateway 超时 | 扫描范围过大；`timeout_ms` 小于实际耗时；Gateway 到 HBase 的 `rpc_timeout_ms` 过小 | 缩小 RowKey 范围并显式指定 `columns`；调整超时；已返回部分结果的 Scan 不要从头重试后拼接旧数据 |
-| 缓存未命中或意外回源 | TTL 过期；`WHERE` 列未被缓存；范围未完整覆盖；版本或时间戳语义不同；`cache := false` 或全局开关关闭；带 `LIMIT` 的结果不作为完整范围缓存 | 用 `hbase_cache_stats()` 观察；重复查询保持相同范围与列集；检查 `hbase_cache_enabled`、`hbase_cache_ttl`；改用 RowKey 分段 |
+| 缓存未命中或意外回源 | TTL 过期；列集合变化（M3 未实现 Partial Hit）；请求范围小于/大于已缓存段；版本或时间戳语义不同；`cache := false` 或全局开关关闭；带 `LIMIT` 的查询不会提交被截断的段 | 用 `hbase_cache_stats()` 观察 `full_hit_count` / `miss_count` / `expired_segments`；重复查询保持**完全相同的范围与列集合**；检查 `hbase_cache_enabled`、`hbase_cache_ttl`、`hbase_cache_directory` |
+| 缓存写入失败 | 磁盘满、目录无权限、缓存目录被外部删除 | 不影响查询结果；`hbase_cache_stats().write_error_count` 会增加，检查目录权限与磁盘空间 |
 | 结果为空但 RowKey 存在 | 列不存在、Cell 不存在、时间戳范围过滤掉数据 | Cell 不存在按 HBase 语义映射为 NULL；核对 `timestamp_min` / `timestamp_max` 与 `max_versions` |
 | RowKey 范围结果异常 | RowKey 被按 UTF-8 字符串处理，破坏二进制排序 | 二进制 RowKey 用 BLOB 输入；注意 `stop_row` 右开边界 |
 | 列类型不匹配 | 列类型与 DuckDB 逻辑类型映射不一致 | 通过 `hbase_columns()` 核对 Family / Qualifier 与类型映射；映射规则待定（TBD） |

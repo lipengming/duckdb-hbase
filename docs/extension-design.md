@@ -20,8 +20,8 @@ namespace provider {} namespace catalog {} namespace common {}
 | extension | `hbase_extension.cpp`、`hbase_extension_state.cpp`、`function_registry.cpp` | 加载、函数与配置注册、生命周期 | `HBaseExtension::Load()` |
 | sql | `hbase_scan_function.cpp`、`hbase_get_function.cpp`、`hbase_connect_function.cpp`、`hbase_cache_functions.cpp`、`hbase_metadata_functions.cpp` | 参数解析、Schema 获取、输出列构建 | `hbase_scan`、`hbase_get`、`hbase_connect` 等 |
 | scan | `scan_planner.cpp`、`scan_executor.cpp`、`scan_pipeline.cpp`、`projection_planner.cpp`、`predicate_planner.cpp`、`rowkey_range_planner.cpp`、`data_chunk_converter.cpp` | 规划与执行、Arrow 转 DataChunk | `ScanPlan`、`ScanRequest` |
-| cache | `cache_manager.cpp`、`cache_lookup_engine.cpp`、`cache_coverage_index.cpp`、`cache_segment_manager.cpp`、`cache_merger.cpp`、`cache_invalidation.cpp`、`cache_eviction.cpp` | 覆盖判断、读写、合并、失效、淘汰 | `ICacheManager`、`ICacheReader`、`ICacheWriter` |
-| storage | `parquet_cache_storage.cpp`、`memory_cache_storage.cpp`、`metadata_store.cpp`、`segment_manifest.cpp` | Parquet/内存数据与 Metadata 持久化 | `ICacheStorage` |
+| cache | `cache_types.cpp`、`cache_coverage_index.cpp`、`cache_manager.cpp`、`cache_metadata_store.cpp`（M3 已实现）；`cache_merger.cpp`、`cache_invalidation.cpp`、`cache_eviction.cpp`（M4/M5） | 覆盖判断、读写、元数据、TTL、失效 | `CacheManager`、`CacheWriteSession`、`ICacheSegmentReader` |
+| storage | `segment_file_storage.cpp`、`memory_cache_storage.cpp`（M3 已实现）；`parquet_cache_storage.cpp`（ADR-002 延后） | 段数据文件读写与 Metadata 持久化 | `ICacheStorage`、`ICacheSegmentWriter` |
 | provider | `grpc_provider.cpp`、`http_provider.cpp`、`provider_factory.cpp`、`arrow_stream_reader.cpp` | 会话、能力协商、Scan/Get、取消、错误映射 | `IRemoteScanProvider`、`IScanStream`、`IGetStream` |
 | catalog | `schema_provider.cpp`、`column_mapping.cpp`、`type_mapping.cpp` | Family/Qualifier 与逻辑类型映射 | Schema 查询结果 |
 | common | `config.cpp`、`errors.cpp`、`logger.cpp`、`types.cpp`、`rowkey.cpp` | 配置、异常、日志、类型、RowKey | 公共头文件 |
@@ -193,12 +193,18 @@ VARCHAR 入参按 UTF-8 转字节，BLOB 入参保持原始字节；缓存覆盖
 
 > 详见 [技术方案 §7.5](../tech_v0.1.md)、[§7.6](../tech_v0.1.md)、[§8.3](../tech_v0.1.md)。
 
-## 6.1 扫描执行实现（M1）
+## 6.1 扫描执行实现（M1/M2/M3）
 
-- `RemoteScanStream`：后台线程调用 `Provider::Scan`，把 Arrow 批推入**有界队列**（默认 2 批），主线程按需消费，内存不随结果集增长。
-- `DecodeArrowIpc`：解码单批 Arrow IPC（UTF8 列 + validity），映射为字符串列；`DataChunk` 用 `FlatVector` + `StringVector::AddString` 填充。
-- 单查询串行消费（`MaxThreads()=1`）；并行扫描在 M2 按 RowKey 区间切分。
-- 取消：查询中止时 `RemoteScanStream::Close()` 通知工作线程退出；gRPC 侧的 `Cancel` 在 M2 接入（当前依赖连接关闭）。
+- `RemoteScanStream`：后台线程调用 `Provider::Scan`，把批次推入**有界队列**（默认 2 批），主线程按需消费，内存不随结果集增长。
+- `DecodeColumnarBatch`：解码 `BATCH_ENCODING_UTF8_COLUMNS`（UTF8 列 + validity），映射为字符串列；`DataChunk` 用 `FlatVector` + `StringVector::AddString` 填充。
+- 并行扫描（M2）：`BuildPartitions` 按 RowKey 区间切分，`MaxThreads = 分区数`，每个 LocalState 持有独立远端流。
+- 取消：查询中止时 `RemoteScanStream::Close()` 通知工作线程退出，并调用 `Provider::Cancel`。
+- 缓存（M3）：
+  - `InitGlobal` 调用 `CacheManager::Lookup(ScanPlan)`；`FULL_HIT` 时在全局状态里**一次性打开所有命中段**，任一段打开失败就标记 `INVALID` 并整体回源（避免读到一半才发现损坏）。
+  - 命中路径：`ICacheSegmentReader::Next` 逐批读段文件，`BuildSourceMap` 把请求列映射到段文件列序，再走与远端路径相同的 `DataChunk` 填充代码。
+  - 未命中路径：每开始一个扫描分区就 `CacheManager::BeginWrite` 开一个写会话，边返回边 `Append` 完整批次；分区正常结束时 `Finish`（rename 发布 + 单事务写元数据），`LIMIT`/取消/异常/析构时 `Abort`，绝不提交截断结果。
+  - `cache := false`、`SET hbase_cache_enabled=false`、`max_versions>1`、指定时间戳、`include_stop=true` 一律既不读也不写缓存。
+- 模块依赖：`sql/hbase_scan_function.cpp` 同时依赖 `cache/cache_manager.hpp` 与 `provider/remote_scan_provider.hpp`；`cache` 不 include 任何 `provider` 具体实现头文件，`scan` 不 include `grpc_provider.hpp`。
 
 ## 7. Gateway 可用性与连接生命周期
 

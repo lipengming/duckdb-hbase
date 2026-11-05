@@ -2284,3 +2284,18 @@ Python 同样支持通过 `duckdb.connect()` 加载 Extension。
 - **影响**：所有列以 UTF8 字符串承载，NULL 用长度 `-1` 表示；类型映射与多版本展开在这一编码上实现。
 - **回退条件**：当 Arrow C++ 依赖可以稳定构建（或采用预编译包）时，新增 `BATCH_ENCODING_ARROW_IPC` 编码并让 Gateway 按能力协商结果选择编码；Extension 侧按 `encoding` 分派解码器。
 - **状态**：已生效（2026-11），Arrow IPC 列在 `docs/roadmap.md` 技术债。
+
+### ADR-002：M3 缓存段的物理格式使用自研列式段文件，Parquet 延后
+
+- **背景**：本方案 §2.7、§7.3-§7.6 约定段数据写 Parquet、元数据写 SQLite。实现阶段核实 DuckDB v2.0.0 的构建产物后发现：Parquet 读写实现在 in-tree `extension/parquet`（`libparquet_extension.a`）中，**没有**链接进 `libduckdb`，因此 loadable extension 无法通过正常链接使用 `ParquetWriter` / `ParquetReader`；用 `-force_load` 强行链接会因同一份 DuckDB 第三方符号被重复实例化而在运行期崩溃。在表函数执行路径内用内部 `Connection` 执行 `COPY ... TO` 则属于嵌套查询，存在调度死锁与事务嵌套风险，不能作为稳定路径。
+- **决策**：M3 引入 `ICacheStorage` 抽象，默认实现为自研列式段文件 `DHBSEG01`（逐列块式布局、块内 CRC32、staging 目录 + 同目录 rename 原子发布），另提供 `MemoryCacheStorage`（`hbase_cache_mode='memory'`）。`hbase_cache_mode` 的合法取值为 `file` / `memory`；`parquet` 显式报错并指向本 ADR。
+- **影响**：段文件不能直接被 Parquet 生态工具读取；`hbase_cache_mode='parquet'` 不再可用。缓存目录布局为 `<root>/metadata.db`、`<root>/segments/*.seg`、`<root>/staging/*.tmp`。
+- **回退条件**：引入 Arrow/Parquet C++ 依赖的评审通过（体积、编译时长、许可证），或 DuckDB 提供公开的 Parquet 读写 API 后，新增 `ParquetCacheStorage` 实现同一 `ICacheStorage` 接口；上层 `CacheManager`、覆盖索引、元数据不需要改动。
+- **状态**：已生效（2026-11）。Parquet 落地仍列为 `docs/roadmap.md` M3 的未完成项。
+
+### ADR-003：元数据表用 namespace + table_name 替代 table_id，并新增 INVALID 段状态
+
+- **背景**：本方案 §2.7 建议 `cache_segment.table_id VARCHAR` 单字段表达表身份，且 `status` 的取值与 §7.6 四阶段映射"待定"。单个 `table_id` 无法在 SQL 层面同时支撑"按 namespace 清理"与"表名含点号"两类场景。
+- **决策**：`cache_segment` 拆分为 `namespace` + `table_name`（不再有 `table_id`）；`status` 取值为 `INIT` / `WRITING` / `VALIDATING` / `COMMITTED` / `INVALID`，其中 `INVALID` 表示校验失败、文件丢失或主动作废，保留记录用于排障但**不参与**任何覆盖判定。
+- **影响**：`hbase_cache_clear(namespace, table)` 与 `hbase_cache_clear(connection, namespace, table)` 都能精确命中；元数据查询按 `(namespace, table_name, status)` 建索引。
+- **状态**：已生效（2026-11）。

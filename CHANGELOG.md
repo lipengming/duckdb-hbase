@@ -6,6 +6,24 @@
 
 ### Added
 
+- **M3 缓存闭环**：`CacheManager` 门面 + 覆盖索引 + 段文件存储 + SQLite 元数据 + Full Hit 读取路径。
+  - 覆盖判定按 HBase 字节序（`memcmp` 语义）比较，五项条件（范围、列集合、时间戳语义、未过期、COMMITTED 状态）全满足才算 Full Hit；段范围必须是请求范围的子集，避免读出越界行。M3 不做 Partial Hit，任何缺口/缺列一律回源。
+  - `hbase_scan` 命中路径完全不访问 Gateway；未命中路径边返回边 tee 写段，分区正常结束才 `Finish`（rename 发布 + 单事务提交元数据），`LIMIT`/取消/异常/析构时 `Abort`，不会提交截断结果。
+  - `hbase_scan(..., cache := true)` 默认开启缓存；`max_versions > 1`、指定时间戳、`stop_row` 闭区间一律绕过缓存且不写缓存。
+  - 配置项：`hbase_cache_enabled` / `hbase_cache_ttl` / `hbase_cache_directory` / `hbase_cache_mode`（`file`/`memory`）/ `hbase_cache_max_size`（仅登记）。
+  - 新增 `hbase_cache_stats()`（11 列，`docs/cache-design.md` §9.1 定稿）与 `hbase_cache_clear()` 的 0/2/3 参数三种签名。
+  - 崩溃恢复：`staging/*` 残留与元数据中非 `COMMITTED` 记录在首次使用时清理；SQLite 用 WAL + `synchronous=FULL`。
+- **C++ 单元测试**：`extension/test/unit/`（Catch2 单头文件，来自 DuckDB `third_party/catch`，无新依赖），覆盖覆盖索引、段文件往返与损坏检测、元数据原子提交与崩溃残留、`CacheManager` 命中/TTL/失效/统计/memory 模式；`make unit` 运行。
+- **构建**：vcpkg 增加 `sqlite3`（缓存元数据）。
+
+### Changed
+
+- `hbase_scan` 的 `cache` 参数语义从"M1 未实现，显式 true 报错"改为"默认 true，可正常使用缓存"。
+- **ADR-002**：M3 段数据格式采用自研列式段文件 `DHBSEG01`，Parquet 延后（DuckDB 未把 in-tree parquet 链接进 `libduckdb`，loadable extension 无法直接使用；`-force_load` 会因第三方符号重复实例化崩溃）；`hbase_cache_mode='parquet'` 显式报错。
+- **ADR-003**：元数据表用 `namespace` + `table_name` 替代 `table_id`，`status` 增加 `INVALID`。
+
+### Added（历史条目）
+
 - **多版本展开**：`max_versions > 1` 时 Gateway 按 Cell 时间戳展开成多行，追加 `__timestamp` 列；集成测试覆盖 r011 双版本。
 - **并行扫描**：按 RowKey 区间切分为多个分区，每个线程持有独立远端流（`MaxThreads = 分区数`）；分区数受 Gateway `max_parallel_scans` 约束。
 - **ADR-001**：记录 M2 数据面使用 UTF8 列式编码、Arrow IPC 延后的决策与回退条件。
