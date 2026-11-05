@@ -19,6 +19,13 @@ Thumbs.db
 .cache/
 compile_commands.json
 
+# ---- 运行时缓存（默认 hbase_cache_directory）----
+hbase_cache/
+duckdb_hbase_cache_test/
+# 源码目录 extension/src/cache 不是运行时缓存，显式排除上面的兜底规则
+!extension/src/cache/
+!extension/src/include/cache/
+
 # ---- C++ / CMake ----
 build/
 build-*/
@@ -80,7 +87,7 @@ dist/
 
 # ---- 运行时数据与缓存 ----
 run/
-cache/
+/cache/
 scans/
 *.parquet.tmp
 segment-*/
