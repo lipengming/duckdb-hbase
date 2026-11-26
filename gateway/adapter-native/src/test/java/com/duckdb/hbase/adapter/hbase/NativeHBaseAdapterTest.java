@@ -111,6 +111,30 @@ class NativeHBaseAdapterTest {
   }
 
   @Test
+  void scanHonorsMinTimestampWhenMaxTimestampIsUnspecified() throws HBaseAccessException {
+    Assumptions.assumeTrue(available, "本机未运行 HBase，跳过集成测试");
+
+    ScanRequest request =
+        ScanRequest.newBuilder()
+            .setRequestId("it-scan-min-timestamp")
+            .setNamespace("duckdb_test")
+            .setTable("customer_profile")
+            .addColumns(ColumnRef.newBuilder().setFamily("cf1").setQualifier("name").build())
+            .setMinTimestamp(System.currentTimeMillis() + 60_000L)
+            .build();
+
+    List<Row> rows = new ArrayList<>();
+    try (ScanCursor cursor = adapter.scan(request)) {
+      List<Row> batch;
+      while (!(batch = cursor.nextBatch(10)).isEmpty()) {
+        rows.addAll(batch);
+      }
+    }
+
+    assertTrue(rows.isEmpty(), "未来时间戳下界应排除当前夹具数据");
+  }
+
+  @Test
   void batchGetFetchesRequestedRowKeys() throws HBaseAccessException {
     Assumptions.assumeTrue(available, "本机未运行 HBase，跳过集成测试");
 
