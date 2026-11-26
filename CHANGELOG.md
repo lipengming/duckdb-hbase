@@ -14,6 +14,7 @@
 - 缓存元数据 Schema v2 增加 source_id（连接名 + Gateway endpoint），同名 namespace/table 在不同数据源之间隔离；旧 v1 段迁移后不参与具名数据源命中。
 - 修复连接覆盖时误关闭新 Provider 的问题；移除/替换连接时允许已绑定查询持有旧 Provider，最后一个引用释放后再清理。
 - HTTP endpoint 在当前仅支持 gRPC 的 ProviderFactory 下提前拒绝，避免连接配置被误认为可用。
+- Native Adapter 在 Scan/BatchGet 游标正常耗尽或关闭时从活动游标表移除引用，避免已完成请求长期占用内存；重复 Request ID 会先关闭旧游标。
 
 ### Added
 

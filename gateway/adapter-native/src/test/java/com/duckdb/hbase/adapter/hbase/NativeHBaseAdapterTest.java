@@ -104,6 +104,7 @@ class NativeHBaseAdapterTest {
       }
     }
 
+    assertFalse(adapter.cancel("it-scan-1"), "正常结束的 Scan 应从活动游标表移除");
     assertEquals(4, rows.size(), "start 闭 / stop 开，r001..r004 共 4 行");
     assertEquals("r001", new String(rows.get(0).rowKey(), StandardCharsets.UTF_8));
     assertEquals("user-001", cellValue(rows.get(0), "cf1", "name"));
@@ -158,6 +159,7 @@ class NativeHBaseAdapterTest {
     }
 
     assertEquals(3, rows.size());
+    assertFalse(adapter.cancel("it-get-1"), "正常结束的 BatchGet 应从活动游标表移除");
     assertEquals("3", cellValue(rows.get(0), "cf2", "score"), "r001 的 cf2:score = 1*3 % 100");
   }
 

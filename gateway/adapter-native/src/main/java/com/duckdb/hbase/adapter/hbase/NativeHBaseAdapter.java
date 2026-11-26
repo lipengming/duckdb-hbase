@@ -113,9 +113,11 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
 
       table = connection.getTable(tableName);
       ResultScanner scanner = table.getScanner(scan);
-      NativeScanCursor cursor = new NativeScanCursor(request.getRequestId(), table, scanner);
-      register(cursor);
-      return cursor;
+      String requestId = request.getRequestId();
+      NativeScanCursor cursor =
+          new NativeScanCursor(
+              requestId, table, scanner, closed -> activeCursors.remove(requestId, closed));
+      return register(cursor);
     } catch (IOException e) {
       closeQuietly(table);
       throw new HBaseAccessException("启动 Scan 失败: " + tableName.getNameAsString(), e);
@@ -143,9 +145,11 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
 
       table = connection.getTable(tableName);
       Result[] results = table.get(gets);
-      NativeGetCursor cursor = new NativeGetCursor(request.getRequestId(), table, results);
-      register(cursor);
-      return cursor;
+      String requestId = request.getRequestId();
+      NativeGetCursor cursor =
+          new NativeGetCursor(
+              requestId, table, results, closed -> activeCursors.remove(requestId, closed));
+      return register(cursor);
     } catch (IOException e) {
       closeQuietly(table);
       throw new HBaseAccessException("BatchGet 失败: " + tableName.getNameAsString(), e);
@@ -183,10 +187,16 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
     }
   }
 
-  private void register(ScanCursor cursor) {
-    if (cursor.requestId() != null && !cursor.requestId().isEmpty()) {
-      activeCursors.put(cursor.requestId(), cursor);
+  private ScanCursor register(ScanCursor cursor) {
+    String requestId = cursor.requestId();
+    if (requestId != null && !requestId.isEmpty()) {
+      ScanCursor previous = activeCursors.put(requestId, cursor);
+      if (previous != null && previous != cursor) {
+        // A duplicate ID must not orphan the previous scanner.
+        closeQuietly(previous);
+      }
     }
+    return cursor;
   }
 
   private static void applyColumns(Scan scan, List<ColumnRef> columns) {
