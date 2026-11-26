@@ -17,6 +17,7 @@ namespace {
 const char *kSchemaSql = R"SQL(
 CREATE TABLE IF NOT EXISTS cache_segment (
     segment_id     TEXT PRIMARY KEY,
+    source_id      TEXT NOT NULL DEFAULT '',
     namespace      TEXT NOT NULL,
     table_name     TEXT NOT NULL,
     start_row      BLOB NOT NULL,
@@ -43,7 +44,7 @@ CREATE TABLE IF NOT EXISTS cache_segment_column (
 )SQL";
 
 const char *kSegmentColumns =
-    "segment_id, namespace, table_name, start_row, stop_row, row_count, created_at, expires_at, "
+    "segment_id, source_id, namespace, table_name, start_row, stop_row, row_count, created_at, expires_at, "
     "generation, file_path, file_size, status, max_versions, timestamp_min, timestamp_max";
 
 string BlobToString(sqlite3_stmt *statement, int column) {
@@ -141,24 +142,25 @@ private:
 SegmentDescriptor ReadSegment(sqlite3_stmt *statement) {
     SegmentDescriptor segment;
     segment.segment_id = ColumnString(statement, 0);
-    segment.namespace_name = ColumnString(statement, 1);
-    segment.table = ColumnString(statement, 2);
-    segment.range.start = BlobToString(statement, 3);
-    segment.range.stop = BlobToString(statement, 4);
-    segment.row_count = static_cast<idx_t>(ColumnInt64(statement, 5));
-    segment.created_at = ColumnInt64(statement, 6);
-    segment.expires_at = ColumnInt64(statement, 7);
-    segment.generation = static_cast<idx_t>(ColumnInt64(statement, 8));
-    segment.file_path = ColumnString(statement, 9);
-    segment.file_size = static_cast<idx_t>(ColumnInt64(statement, 10));
+    segment.source_id = ColumnString(statement, 1);
+    segment.namespace_name = ColumnString(statement, 2);
+    segment.table = ColumnString(statement, 3);
+    segment.range.start = BlobToString(statement, 4);
+    segment.range.stop = BlobToString(statement, 5);
+    segment.row_count = static_cast<idx_t>(ColumnInt64(statement, 6));
+    segment.created_at = ColumnInt64(statement, 7);
+    segment.expires_at = ColumnInt64(statement, 8);
+    segment.generation = static_cast<idx_t>(ColumnInt64(statement, 9));
+    segment.file_path = ColumnString(statement, 10);
+    segment.file_size = static_cast<idx_t>(ColumnInt64(statement, 11));
     SegmentStatus status;
-    if (!TryParseSegmentStatus(ColumnString(statement, 11), status)) {
+    if (!TryParseSegmentStatus(ColumnString(statement, 12), status)) {
         status = SegmentStatus::INVALID;
     }
     segment.status = status;
-    segment.consistency.max_versions = static_cast<int32_t>(ColumnInt64(statement, 12));
-    segment.consistency.timestamp_min = ColumnInt64(statement, 13);
-    segment.consistency.timestamp_max = ColumnInt64(statement, 14);
+    segment.consistency.max_versions = static_cast<int32_t>(ColumnInt64(statement, 13));
+    segment.consistency.timestamp_min = ColumnInt64(statement, 14);
+    segment.consistency.timestamp_max = ColumnInt64(statement, 15);
     return segment;
 }
 
@@ -260,11 +262,50 @@ void CacheMetadataStore::CreateSchema() {
         sqlite3_free(error);
         throw IOException("hbase cache: 创建元数据表失败: %s", message);
     }
-    if (sqlite3_exec(db_, "PRAGMA user_version=1;", nullptr, nullptr, &error) != SQLITE_OK) {
+    // Schema v2: migrate existing v1 databases. Legacy rows retain an empty
+    // source_id and are intentionally never reused by a named HBase source.
+    bool has_source_id = false;
+    {
+        SqliteStatement columns(db_, "PRAGMA table_info(cache_segment)");
+        while (columns.Step()) {
+            if (ColumnString(columns.Get(), 1) == "source_id") {
+                has_source_id = true;
+                break;
+            }
+        }
+    }
+    if (!has_source_id &&
+        sqlite3_exec(db_, "ALTER TABLE cache_segment ADD COLUMN source_id TEXT NOT NULL DEFAULT '';",
+                     nullptr, nullptr, &error) != SQLITE_OK) {
+        auto message = error ? string(error) : string(sqlite3_errmsg(db_));
+        sqlite3_free(error);
+        throw IOException("hbase cache: 升级元数据 Schema v2 失败: %s", message);
+    }
+    if (sqlite3_exec(db_,
+                     "CREATE INDEX IF NOT EXISTS idx_cache_segment_source_table "
+                     "ON cache_segment(source_id, namespace, table_name, status);",
+                     nullptr, nullptr, &error) != SQLITE_OK) {
+        auto message = error ? string(error) : string(sqlite3_errmsg(db_));
+        sqlite3_free(error);
+        throw IOException("hbase cache: 创建数据源索引失败: %s", message);
+    }
+    if (sqlite3_exec(db_, "PRAGMA user_version=2;", nullptr, nullptr, &error) != SQLITE_OK) {
         auto message = error ? string(error) : string(sqlite3_errmsg(db_));
         sqlite3_free(error);
         throw IOException("hbase cache: 设置元数据版本失败: %s", message);
     }
+}
+
+void CacheMetadataStore::LoadSegments(const string &source_id, const string &namespace_name,
+                                      const string &table, vector<SegmentDescriptor> &out) {
+    const lock_guard<mutex> guard(lock_);
+    out = QuerySegments(db_, string("SELECT ") + kSegmentColumns + " FROM cache_segment "
+                        "WHERE source_id = ? AND namespace = ? AND table_name = ? ORDER BY created_at",
+                        [&](SqliteStatement &statement) {
+                            statement.BindText(1, source_id);
+                            statement.BindText(2, namespace_name);
+                            statement.BindText(3, table);
+                        });
 }
 
 void CacheMetadataStore::LoadSegments(const string &namespace_name, const string &table,
@@ -295,23 +336,24 @@ void CacheMetadataStore::CommitSegment(const SegmentDescriptor &segment) {
     }
     try {
         SqliteStatement insert(db_, string("INSERT INTO cache_segment (") + kSegmentColumns +
-                                       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                                       ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         insert.BindText(1, segment.segment_id);
-        insert.BindText(2, segment.namespace_name);
-        insert.BindText(3, segment.table);
-        insert.BindBlob(4, segment.range.start);
-        insert.BindBlob(5, segment.range.stop);
-        insert.BindInt64(6, static_cast<int64_t>(segment.row_count));
-        insert.BindInt64(7, segment.created_at);
-        insert.BindInt64(8, segment.expires_at);
-        insert.BindInt64(9, static_cast<int64_t>(segment.generation));
-        insert.BindText(10, segment.file_path);
-        insert.BindInt64(11, static_cast<int64_t>(segment.file_size));
+        insert.BindText(2, segment.source_id);
+        insert.BindText(3, segment.namespace_name);
+        insert.BindText(4, segment.table);
+        insert.BindBlob(5, segment.range.start);
+        insert.BindBlob(6, segment.range.stop);
+        insert.BindInt64(7, static_cast<int64_t>(segment.row_count));
+        insert.BindInt64(8, segment.created_at);
+        insert.BindInt64(9, segment.expires_at);
+        insert.BindInt64(10, static_cast<int64_t>(segment.generation));
+        insert.BindText(11, segment.file_path);
+        insert.BindInt64(12, static_cast<int64_t>(segment.file_size));
         // 正常写入路径只提交 COMMITTED；其它状态用于崩溃恢复演练与排障
-        insert.BindText(12, SegmentStatusName(segment.status));
-        insert.BindInt64(13, segment.consistency.max_versions);
-        insert.BindInt64(14, segment.consistency.timestamp_min);
-        insert.BindInt64(15, segment.consistency.timestamp_max);
+        insert.BindText(13, SegmentStatusName(segment.status));
+        insert.BindInt64(14, segment.consistency.max_versions);
+        insert.BindInt64(15, segment.consistency.timestamp_min);
+        insert.BindInt64(16, segment.consistency.timestamp_max);
         insert.Execute();
 
         SqliteStatement column_statement(

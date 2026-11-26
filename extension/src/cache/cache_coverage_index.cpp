@@ -88,6 +88,9 @@ CacheLookupResult ComputeCacheLookup(const vector<SegmentDescriptor> &segments, 
 
     vector<const SegmentDescriptor *> candidates;
     for (auto &segment : segments) {
+        if (segment.source_id != plan.source_id) {
+            continue;
+        }
         if (segment.status != SegmentStatus::COMMITTED) {
             skipped_status++;
             continue;

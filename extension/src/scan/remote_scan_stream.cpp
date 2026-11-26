@@ -48,6 +48,9 @@ void RemoteScanStream::Push(Item item) {
     if (closed_) {
         return;
     }
+    if (item.finished) {
+        finished_ = true;
+    }
     queue_.push_back(std::move(item));
     guard.unlock();
     cv_.notify_all();

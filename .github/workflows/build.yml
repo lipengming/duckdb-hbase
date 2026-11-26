@@ -60,6 +60,10 @@ jobs:
         run: |
           ./build/release/test/unittest "*hbase*"
 
+      - name: Run HBase C++ unit tests
+        run: |
+          ./build/release/extension/hbase/hbase_unit_tests
+
       - name: Smoke test the loadable extension
         run: |
           ./build/release/duckdb -unsigned -c \
@@ -68,7 +72,25 @@ jobs:
       - name: C++ formatting check
         run: |
           pip install clang-format
-          git ls-files 'src/*.cpp' 'src/*.hpp' | xargs clang-format --dry-run --Werror
+          git ls-files | grep -E '^extension/(src|test/unit)/.*\.(cpp|hpp)
+
+  java-gateway:
+    name: Build Java Gateway (JDK 11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+          cache: maven
+
+      - name: Build and test gateway
+        run: mvn -B -f gateway/pom.xml verify
+ | xargs -r clang-format --dry-run --Werror
 
   java-gateway:
     name: Build Java Gateway (JDK 11)

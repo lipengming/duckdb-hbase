@@ -30,6 +30,7 @@ SegmentDescriptor MakeSegment(const string &id, const string &start, const strin
                               int64_t expires_at = 0, int64_t row_count = 10) {
     SegmentDescriptor segment;
     segment.segment_id = id;
+    segment.source_id = "cluster-a";
     segment.namespace_name = "default";
     segment.table = "t";
     segment.range.start = start;
@@ -44,6 +45,7 @@ SegmentDescriptor MakeSegment(const string &id, const string &start, const strin
 
 ScanPlan MakePlan(const string &start, const string &stop, vector<CacheColumn> columns) {
     ScanPlan plan;
+    plan.source_id = "cluster-a";
     plan.namespace_name = "default";
     plan.table = "t";
     plan.range.start = start;
@@ -131,6 +133,17 @@ TEST_CASE("缺列 -> Miss", "[cache][coverage]") {
     auto result = ComputeCacheLookup(segments, plan, 1000);
     REQUIRE(result.status == CacheStatus::MISS);
     REQUIRE(result.reason.find("columns") != string::npos);
+}
+
+TEST_CASE("不同数据源的同名表不能共享缓存", "[cache][coverage]") {
+    auto columns = Columns({"cf:name"});
+    vector<SegmentDescriptor> segments {MakeSegment("cluster-a-segment", "a", "z", columns)};
+    auto plan = MakePlan("a", "z", columns);
+    plan.source_id = "cluster-b";
+
+    auto result = ComputeCacheLookup(segments, plan, 1000);
+    REQUIRE(result.status == CacheStatus::MISS);
+    REQUIRE(result.segments.empty());
 }
 
 TEST_CASE("缓存列超集不能命中子集查询（HBase 行集合语义）", "[cache][coverage]") {

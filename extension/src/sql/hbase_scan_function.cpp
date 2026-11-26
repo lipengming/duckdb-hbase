@@ -433,6 +433,9 @@ unique_ptr<FunctionData> HbaseScanBind(ClientContext &context, TableFunctionBind
     }
 
     auto &plan = result->plan;
+    // Include the configured endpoint so replacing a named connection with a different
+    // Gateway does not reuse the previous source's cached segments.
+    plan.source_id = connection_name + "\x1f" + result->connection.endpoint;
     plan.namespace_name = result->request.namespace_name;
     plan.table = result->request.table;
     plan.range.start = result->request.start_row;

@@ -193,7 +193,7 @@ CacheLookupResult CacheManager::Lookup(ClientContext &context, const ScanPlan &p
     Maintain(now);
 
     vector<SegmentDescriptor> segments;
-    metadata_->LoadSegments(plan.namespace_name, plan.table, segments);
+    metadata_->LoadSegments(plan.source_id, plan.namespace_name, plan.table, segments);
     vector<SegmentDescriptor> usable;
     usable.reserve(segments.size());
     for (auto &segment : segments) {
@@ -234,6 +234,7 @@ unique_ptr<CacheWriteSession> CacheManager::BeginWrite(ClientContext &context, c
 
         SegmentDescriptor segment;
         segment.segment_id = GenerateSegmentId();
+        segment.source_id = plan.source_id;
         segment.namespace_name = plan.namespace_name;
         segment.table = plan.table;
         segment.range = partition_range;

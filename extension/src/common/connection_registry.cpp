@@ -49,7 +49,7 @@ ConnectionConfig ParseEndpoint(const string& connection_name, const string& endp
     config.scheme = endpoint.substr(0, scheme_end);
 
     if (!IsSupportedScheme(config.scheme)) {
-        fail("不支持的 scheme '" + config.scheme + "'，当前支持 grpc / http");
+        fail("不支持的 scheme '" + config.scheme + "'，当前仅支持 grpc");
     }
 
     auto authority = endpoint.substr(scheme_end + 3);

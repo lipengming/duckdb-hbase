@@ -87,6 +87,8 @@ struct ScanConsistency {
 
 //! 缓存视角的扫描计划（由 sql 层从 hbase_scan 参数构建）。
 struct ScanPlan {
+    //! Stable identity of the configured source (connection name + endpoint); prevents cross-cluster reuse.
+    string source_id;
     string namespace_name;
     string table;
     RowKeyRange range;
@@ -99,13 +101,14 @@ struct ScanPlan {
     bool include_stop = false;
 
     string TableKey() const {
-        return namespace_name + "." + table;
+        return source_id + "\x1f" + namespace_name + "\x1f" + table;
     }
 };
 
 //! 一个缓存段的元数据，对应元数据表 cache_segment。
 struct SegmentDescriptor {
     string segment_id;
+    string source_id;
     string namespace_name;
     string table;
     RowKeyRange range;
@@ -122,7 +125,7 @@ struct SegmentDescriptor {
     vector<CacheColumn> columns;
 
     string TableKey() const {
-        return namespace_name + "." + table;
+        return source_id + "\x1f" + namespace_name + "\x1f" + table;
     }
     bool IsExpired(int64_t now_ms) const {
         return expires_at > 0 && expires_at <= now_ms;
