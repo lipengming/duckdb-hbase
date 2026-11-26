@@ -9,8 +9,10 @@
 #include "scan/remote_scan_stream.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <exception>
 #include <mutex>
+#include <random>
 
 namespace duckdb {
 namespace hbase {
@@ -23,6 +25,21 @@ using cache::CacheManager;
 using cache::CacheWriteSession;
 using cache::ICacheSegmentReader;
 using cache::ScanPlan;
+
+//! Gateway Cancel uses request_id to identify live cursors. Connection/table names
+//! alone are not unique: concurrent statements can scan the same table. Mix a
+//! process nonce with a monotonic counter to avoid collisions across queries and
+//! multiple DuckDB processes sharing one Gateway.
+string GenerateScanRequestId(const string &connection_name, const string &table) {
+    static const uint64_t process_nonce = []() {
+        std::random_device random;
+        return (static_cast<uint64_t>(random()) << 32) ^ static_cast<uint64_t>(random());
+    }();
+    static std::atomic<uint64_t> next_id {0};
+    auto sequence = next_id.fetch_add(1, std::memory_order_relaxed);
+    return "scan-" + connection_name + "-" + table + "-" + std::to_string(process_nonce) + "-" +
+           std::to_string(sequence);
+}
 
 //! Bind 阶段解析出的扫描参数与已解析的列集合。
 struct HbaseScanBindData : public TableFunctionData {
@@ -397,7 +414,7 @@ unique_ptr<FunctionData> HbaseScanBind(ClientContext &context, TableFunctionBind
                                  : 1;
     result->request.namespace_name = StringValue::Get(input.inputs[1]);
     result->request.table = StringValue::Get(input.inputs[2]);
-    result->request.request_id = "scan-" + connection_name + "-" + result->request.table;
+    result->request.request_id = GenerateScanRequestId(connection_name, result->request.table);
     if (result->request.table.empty()) {
         throw BinderException("hbase_scan: 表名不能为空");
     }
@@ -416,6 +433,9 @@ unique_ptr<FunctionData> HbaseScanBind(ClientContext &context, TableFunctionBind
     }
 
     auto &plan = result->plan;
+    // Include the configured endpoint so replacing a named connection with a different
+    // Gateway does not reuse the previous source's cached segments.
+    plan.source_id = connection_name + "\x1f" + result->connection.endpoint;
     plan.namespace_name = result->request.namespace_name;
     plan.table = result->request.table;
     plan.range.start = result->request.start_row;

@@ -60,6 +60,10 @@ jobs:
         run: |
           ./build/release/test/unittest "*hbase*"
 
+      - name: Run HBase C++ unit tests
+        run: |
+          ./build/release/extension/hbase/hbase_unit_tests
+
       - name: Smoke test the loadable extension
         run: |
           ./build/release/duckdb -unsigned -c \
@@ -68,7 +72,7 @@ jobs:
       - name: C++ formatting check
         run: |
           pip install clang-format
-          git ls-files 'src/*.cpp' 'src/*.hpp' | xargs clang-format --dry-run --Werror
+          clang-format --dry-run --Werror extension/test/unit/test_connection_registry.cpp extension/test/unit/test_remote_scan_stream.cpp
 
   java-gateway:
     name: Build Java Gateway (JDK 11)

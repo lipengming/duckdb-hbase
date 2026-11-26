@@ -48,6 +48,9 @@ void RemoteScanStream::Push(Item item) {
     if (closed_) {
         return;
     }
+    if (item.finished) {
+        finished_ = true;
+    }
     queue_.push_back(std::move(item));
     guard.unlock();
     cv_.notify_all();
@@ -80,15 +83,27 @@ bool RemoteScanStream::Next(string& payload, int64_t& row_count) {
 }
 
 void RemoteScanStream::Close() {
+    std::function<void()> cancel;
     {
         std::lock_guard<std::mutex> guard(lock_);
-        if (closed_) {
-            // 已经关闭：只负责 join
-        } else {
+        if (!closed_) {
             closed_ = true;
+            // 只有远端调用仍在执行时才发送 Cancel。回调移出成员后，
+            // 多次 Close()/析构也只会触发一次取消。
+            if (!finished_) {
+                cancel = std::move(on_close_);
+            }
         }
     }
+
     cv_.notify_all();
+    if (cancel) {
+        try {
+            cancel();
+        } catch (...) {
+            // 取消是尽力而为；不能让取消失败阻止本地工作线程退出。
+        }
+    }
     if (worker_.joinable() && worker_.get_id() != std::this_thread::get_id()) {
         worker_.join();
     }

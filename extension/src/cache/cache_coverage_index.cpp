@@ -88,6 +88,9 @@ CacheLookupResult ComputeCacheLookup(const vector<SegmentDescriptor> &segments, 
 
     vector<const SegmentDescriptor *> candidates;
     for (auto &segment : segments) {
+        if (segment.source_id != plan.source_id) {
+            continue;
+        }
         if (segment.status != SegmentStatus::COMMITTED) {
             skipped_status++;
             continue;
@@ -100,14 +103,29 @@ CacheLookupResult ComputeCacheLookup(const vector<SegmentDescriptor> &segments, 
             skipped_consistency++;
             continue;
         }
-        bool has_all_columns = true;
-        for (auto &column : plan.required_columns) {
-            if (!segment.HasColumn(column)) {
-                has_all_columns = false;
-                break;
+        // HBase Scan only returns rows that contain at least one requested Cell.
+        // A cached superset can therefore have a different RowKey set than a scan
+        // requesting only a subset (rows containing only the extra columns leak in).
+        // Until RowKey-aware filtering/merging exists, require exact column-set equality.
+        bool has_exact_columns = segment.columns.size() == plan.required_columns.size();
+        if (has_exact_columns) {
+            for (auto &column : plan.required_columns) {
+                if (!segment.HasColumn(column)) {
+                    has_exact_columns = false;
+                    break;
+                }
             }
         }
-        if (!has_all_columns) {
+        if (has_exact_columns) {
+            for (auto &column : segment.columns) {
+                auto found = std::find(plan.required_columns.begin(), plan.required_columns.end(), column);
+                if (found == plan.required_columns.end()) {
+                    has_exact_columns = false;
+                    break;
+                }
+            }
+        }
+        if (!has_exact_columns) {
             skipped_columns++;
             continue;
         }

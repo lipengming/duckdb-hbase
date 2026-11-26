@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 缓存覆盖判定要求列集合精确相等，避免 HBase Scan 的“至少一个请求 Cell 存在才返回该行”语义下，使用列超集缓存子集查询时泄漏额外 RowKey。
+- `RemoteScanStream::Close()` 对未完成的远端流触发一次 `Provider.Cancel()`，并唤醒有界队列等待者；正常完成的流不发送多余取消。
+- Scan Request ID 增加进程随机 nonce 与单调序号，避免同连接/同表并发查询覆盖 Gateway 活动游标。
+- Native Adapter 在仅指定 `timestamp_min` 时也应用时间戳下界；Scan 与 BatchGet 行为一致。
+- UTF8 固定 Schema 编码器显式拒绝整列族投影，避免将动态 qualifier 静默编码成 NULL。
+- 缓存元数据 Schema v2 增加 source_id（连接名 + Gateway endpoint），同名 namespace/table 在不同数据源之间隔离；旧 v1 段迁移后不参与具名数据源命中。
+- 修复连接覆盖时误关闭新 Provider 的问题；移除/替换连接时允许已绑定查询持有旧 Provider，最后一个引用释放后再清理。
+- HTTP endpoint 在当前仅支持 gRPC 的 ProviderFactory 下提前拒绝，避免连接配置被误认为可用。
+- Native Adapter 在 Scan/BatchGet 游标正常耗尽或关闭时从活动游标表移除引用，避免已完成请求长期占用内存；重复 Request ID 会先关闭旧游标。
+
 ### Added
 
 - **M3 缓存闭环**：`CacheManager` 门面 + 覆盖索引 + 段文件存储 + SQLite 元数据 + Full Hit 读取路径。

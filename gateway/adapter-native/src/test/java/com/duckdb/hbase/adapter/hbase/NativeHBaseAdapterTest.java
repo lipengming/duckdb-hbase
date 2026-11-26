@@ -1,6 +1,7 @@
 package com.duckdb.hbase.adapter.hbase;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.duckdb.hbase.protocol.v1.BatchGetRequest;
@@ -104,10 +105,35 @@ class NativeHBaseAdapterTest {
       }
     }
 
+    assertFalse(adapter.cancel("it-scan-1"), "正常结束的 Scan 应从活动游标表移除");
     assertEquals(4, rows.size(), "start 闭 / stop 开，r001..r004 共 4 行");
     assertEquals("r001", new String(rows.get(0).rowKey(), StandardCharsets.UTF_8));
     assertEquals("user-001", cellValue(rows.get(0), "cf1", "name"));
     assertEquals(2, rows.get(0).cells().size(), "请求的两列 cf1:name 与 cf2:age 都应返回");
+  }
+
+  @Test
+  void scanHonorsMinTimestampWhenMaxTimestampIsUnspecified() throws HBaseAccessException {
+    Assumptions.assumeTrue(available, "本机未运行 HBase，跳过集成测试");
+
+    ScanRequest request =
+        ScanRequest.newBuilder()
+            .setRequestId("it-scan-min-timestamp")
+            .setNamespace("duckdb_test")
+            .setTable("customer_profile")
+            .addColumns(ColumnRef.newBuilder().setFamily("cf1").setQualifier("name").build())
+            .setMinTimestamp(System.currentTimeMillis() + 60_000L)
+            .build();
+
+    List<Row> rows = new ArrayList<>();
+    try (ScanCursor cursor = adapter.scan(request)) {
+      List<Row> batch;
+      while (!(batch = cursor.nextBatch(10)).isEmpty()) {
+        rows.addAll(batch);
+      }
+    }
+
+    assertTrue(rows.isEmpty(), "未来时间戳下界应排除当前夹具数据");
   }
 
   @Test
@@ -134,6 +160,7 @@ class NativeHBaseAdapterTest {
     }
 
     assertEquals(3, rows.size());
+    assertFalse(adapter.cancel("it-get-1"), "正常结束的 BatchGet 应从活动游标表移除");
     assertEquals("3", cellValue(rows.get(0), "cf2", "score"), "r001 的 cf2:score = 1*3 % 100");
   }
 

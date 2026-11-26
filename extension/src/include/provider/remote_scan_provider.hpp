@@ -74,6 +74,7 @@ using RemoteBatchCallback =
 //! - 所有方法失败时抛 duckdb::IOException / duckdb::InvalidInputException；
 //! - Scan/BatchGet 为阻塞式回调：实现按批回调，禁止一次性缓冲全量结果；
 //! - 实现必须线程安全，可被多个查询并发调用。
+//! - Provider 被 ConnectionRegistry 替换/移除后，已绑定查询可能继续持有 shared_ptr；实现必须在析构时释放资源，Close() 必须幂等。
 class IRemoteScanProvider {
 public:
     virtual ~IRemoteScanProvider() = default;

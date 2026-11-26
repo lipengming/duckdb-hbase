@@ -29,7 +29,10 @@ public:
         return directory_ + "/metadata.db";
     }
 
-    //! 读取单表全部段（含非 COMMITTED，由调用方按状态过滤）。
+    //! 按数据源身份读取单表全部段（含非 COMMITTED，由调用方按状态过滤）。
+    void LoadSegments(const string &source_id, const string &namespace_name, const string &table,
+                      vector<SegmentDescriptor> &out);
+    //! 兼容管理/测试用途：读取所有数据源中同名表的段。
     void LoadSegments(const string &namespace_name, const string &table, vector<SegmentDescriptor> &out);
     //! 读取全部段（用于统计与全库清理）。
     void LoadAllSegments(vector<SegmentDescriptor> &out);

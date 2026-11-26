@@ -101,8 +101,11 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
 
       scan.readVersions(Math.max(1, request.getMaxVersions()));
       // setTimeRange 会抛 IOException，必须放在 try 内
-      if (request.getMaxTimestamp() > 0) {
-        scan.setTimeRange(request.getMinTimestamp(), request.getMaxTimestamp());
+      if (request.getMinTimestamp() > 0 || request.getMaxTimestamp() > 0) {
+        long minTimestamp = Math.max(0L, request.getMinTimestamp());
+        long maxTimestamp =
+            request.getMaxTimestamp() > 0 ? request.getMaxTimestamp() : Long.MAX_VALUE;
+        scan.setTimeRange(minTimestamp, maxTimestamp);
       }
       if (request.getBatchSize() > 0) {
         scan.setCaching(request.getBatchSize());
@@ -110,9 +113,11 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
 
       table = connection.getTable(tableName);
       ResultScanner scanner = table.getScanner(scan);
-      NativeScanCursor cursor = new NativeScanCursor(request.getRequestId(), table, scanner);
-      register(cursor);
-      return cursor;
+      String requestId = request.getRequestId();
+      NativeScanCursor cursor =
+          new NativeScanCursor(
+              requestId, table, scanner, closed -> activeCursors.remove(requestId, closed));
+      return register(cursor);
     } catch (IOException e) {
       closeQuietly(table);
       throw new HBaseAccessException("启动 Scan 失败: " + tableName.getNameAsString(), e);
@@ -129,17 +134,22 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
         Get get = new Get(rowKey.toByteArray());
         applyColumns(get, request.getColumnsList());
         // setTimeRange 会抛 IOException，必须放在 try 内
-        if (request.getMaxTimestamp() > 0) {
-          get.setTimeRange(request.getMinTimestamp(), request.getMaxTimestamp());
+        if (request.getMinTimestamp() > 0 || request.getMaxTimestamp() > 0) {
+          long minTimestamp = Math.max(0L, request.getMinTimestamp());
+          long maxTimestamp =
+              request.getMaxTimestamp() > 0 ? request.getMaxTimestamp() : Long.MAX_VALUE;
+          get.setTimeRange(minTimestamp, maxTimestamp);
         }
         gets.add(get);
       }
 
       table = connection.getTable(tableName);
       Result[] results = table.get(gets);
-      NativeGetCursor cursor = new NativeGetCursor(request.getRequestId(), table, results);
-      register(cursor);
-      return cursor;
+      String requestId = request.getRequestId();
+      NativeGetCursor cursor =
+          new NativeGetCursor(
+              requestId, table, results, closed -> activeCursors.remove(requestId, closed));
+      return register(cursor);
     } catch (IOException e) {
       closeQuietly(table);
       throw new HBaseAccessException("BatchGet 失败: " + tableName.getNameAsString(), e);
@@ -177,10 +187,16 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
     }
   }
 
-  private void register(ScanCursor cursor) {
-    if (cursor.requestId() != null && !cursor.requestId().isEmpty()) {
-      activeCursors.put(cursor.requestId(), cursor);
+  private ScanCursor register(ScanCursor cursor) {
+    String requestId = cursor.requestId();
+    if (requestId != null && !requestId.isEmpty()) {
+      ScanCursor previous = activeCursors.put(requestId, cursor);
+      if (previous != null && previous != cursor) {
+        // A duplicate ID must not orphan the previous scanner.
+        closeQuietly(previous);
+      }
     }
+    return cursor;
   }
 
   private static void applyColumns(Scan scan, List<ColumnRef> columns) {

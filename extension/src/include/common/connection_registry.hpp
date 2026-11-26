@@ -40,9 +40,9 @@ struct ConnectionEntry {
 //! 所有方法线程安全。设计见 docs/extension-design.md §7。
 class ConnectionRegistry : public ClientContextState {
 public:
-    //! 注册或覆盖同名连接；返回 true 表示覆盖了已存在的连接。
+    //! 注册或覆盖同名连接；返回 true 表示覆盖了已存在的连接。旧 Provider 若仍被已绑定查询引用，延迟到最后一个 shared_ptr 释放时再清理。
     bool Upsert(ConnectionEntry entry);
-    //! 删除连接（同时关闭 Provider）；返回是否删除成功。
+    //! 删除连接；已有绑定查询可继续持有 Provider，最后一个引用释放后再清理资源。返回是否删除成功。
     bool Remove(const string& name);
     //! 查询连接；存在时写入 out 并返回 true。
     bool TryGet(const string& name, ConnectionEntry& out) const;

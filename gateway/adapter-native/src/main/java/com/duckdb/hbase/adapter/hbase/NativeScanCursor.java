@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.client.Result;
@@ -19,12 +21,19 @@ final class NativeScanCursor implements ScanCursor {
   private final String requestId;
   private final Table table;
   private final ResultScanner scanner;
-  private boolean closed;
+  private final Consumer<ScanCursor> onClose;
+  private final AtomicBoolean closed = new AtomicBoolean();
 
   NativeScanCursor(String requestId, Table table, ResultScanner scanner) {
+    this(requestId, table, scanner, null);
+  }
+
+  NativeScanCursor(
+      String requestId, Table table, ResultScanner scanner, Consumer<ScanCursor> onClose) {
     this.requestId = requestId;
     this.table = table;
     this.scanner = scanner;
+    this.onClose = onClose;
   }
 
   @Override
@@ -37,7 +46,7 @@ final class NativeScanCursor implements ScanCursor {
     if (maxRows <= 0) {
       throw new IllegalArgumentException("maxRows 必须为正数");
     }
-    if (closed) {
+    if (closed.get()) {
       return Collections.emptyList();
     }
     try {
@@ -59,10 +68,9 @@ final class NativeScanCursor implements ScanCursor {
 
   @Override
   public void close() throws HBaseAccessException {
-    if (closed) {
+    if (!closed.compareAndSet(false, true)) {
       return;
     }
-    closed = true;
     try {
       scanner.close();
     } finally {
@@ -70,6 +78,10 @@ final class NativeScanCursor implements ScanCursor {
         table.close();
       } catch (IOException e) {
         throw new HBaseAccessException("关闭 Table 失败", e);
+      } finally {
+        if (onClose != null) {
+          onClose.accept(this);
+        }
       }
     }
   }

@@ -112,6 +112,23 @@ TEST_CASE("写段后同范围同列查询命中且读到相同数据", "[cache][
     REQUIRE(batch.valid[1][2] == false);
 }
 
+TEST_CASE("同名表在不同连接端点之间不共享缓存", "[cache][manager]") {
+    TestDirectory directory("source_isolation");
+    TestContext context(directory.path);
+    auto &manager = CacheManager::Get(context.Context());
+
+    auto source_a = MakePlan({"cf:name"});
+    source_a.source_id = "connection-a\x1fgrpc://cluster-a:18080";
+    vector<vector<string>> values {{"from-a"}};
+    vector<vector<bool>> valid {{true}};
+    REQUIRE(WriteSegment(context.Context(), source_a, values, valid));
+    REQUIRE(manager.Lookup(context.Context(), source_a).status == CacheStatus::FULL_HIT);
+
+    auto source_b = source_a;
+    source_b.source_id = "connection-a\x1fgrpc://cluster-b:18080";
+    REQUIRE(manager.Lookup(context.Context(), source_b).status == CacheStatus::MISS);
+}
+
 TEST_CASE("列集合变化不命中（M3 未实现 Partial Hit）", "[cache][manager]") {
     TestDirectory directory("partial");
     TestContext context(directory.path);

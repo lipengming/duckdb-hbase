@@ -37,6 +37,7 @@ SegmentDescriptor MakeSegment(const string &id, const string &namespace_name, co
                               int64_t expires_at = 0) {
     SegmentDescriptor segment;
     segment.segment_id = id;
+    segment.source_id = "source-a";
     segment.namespace_name = namespace_name;
     segment.table = table;
     segment.range.start = start;
@@ -72,6 +73,7 @@ TEST_CASE("元数据提交后可读回，且包含二进制 RowKey", "[cache][me
         REQUIRE(segments.size() == 1);
         auto &segment = segments[0];
         REQUIRE(segment.segment_id == "s1");
+        REQUIRE(segment.source_id == "source-a");
         REQUIRE(segment.range.start == start);
         REQUIRE(segment.range.stop == stop);
         REQUIRE(segment.row_count == 42);
@@ -91,6 +93,26 @@ TEST_CASE("元数据提交后可读回，且包含二进制 RowKey", "[cache][me
         REQUIRE(segments.size() == 1);
         REQUIRE(segments[0].columns.size() == 2);
     }
+}
+
+TEST_CASE("按数据源隔离：同名 namespace/table 不共享段", "[cache][metadata]") {
+    TestDirectory directory("sources");
+    auto fs = FileSystem::CreateLocal();
+    CacheMetadataStore store(*fs, directory.path);
+    auto source_a = MakeSegment("a1", "default", "t1", "a", "z", SegmentStatus::COMMITTED);
+    source_a.source_id = "cluster-a";
+    auto source_b = MakeSegment("b1", "default", "t1", "a", "z", SegmentStatus::COMMITTED);
+    source_b.source_id = "cluster-b";
+    store.CommitSegment(source_a);
+    store.CommitSegment(source_b);
+
+    vector<SegmentDescriptor> segments;
+    store.LoadSegments("cluster-a", "default", "t1", segments);
+    REQUIRE(segments.size() == 1);
+    REQUIRE(segments[0].segment_id == "a1");
+    store.LoadSegments("cluster-b", "default", "t1", segments);
+    REQUIRE(segments.size() == 1);
+    REQUIRE(segments[0].segment_id == "b1");
 }
 
 TEST_CASE("按表隔离：不同 namespace/表互不影响", "[cache][metadata]") {

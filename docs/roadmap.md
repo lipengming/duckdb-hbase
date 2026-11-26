@@ -235,3 +235,8 @@ SELECT count(*) c, count(v) nn, count(*) FILTER (WHERE v IS NULL) a FROM dbg(99)
 - 接口、配置、错误码变更同 PR 更新 `docs/` 对应文档（见 AGENTS.md 文档同步矩阵）。
 - 里程碑验收指标中凡方案未给出的数值，一律标注"待定（TBD）"，由性能测试基线确定后再补。
 - 版本号在 M1 交付前保持 `v0.1` 设计态，首个可用版本号规则待定（TBD）。
+
+
+## 12. Core correctness hardening（2026-11）
+
+本轮在独立分支中优先收敛 M3/M4 的前置正确性问题：缓存元数据引入 source_id 与 Schema v2 迁移；缓存列覆盖在 RowKey-aware 裁剪完成前要求精确列集合相等；Scan Cancel 回调、唯一 Request ID、连接 Provider 生命周期、timestamp_min-only 和整列族固定 Schema 行为均增加修复或回归测试。该阶段不代表 Partial Hit 已完成；RowKey 持久化、BatchGet Merge、SingleFlight、Generation CAS 仍属于后续 M4 工作。

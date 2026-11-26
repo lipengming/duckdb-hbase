@@ -9,7 +9,9 @@ namespace hbase {
 namespace {
 
 bool IsSupportedScheme(const string& scheme) {
-    return scheme == "grpc" || scheme == "http";
+    // ProviderFactory currently implements only gRPC. Reject HTTP at parse time
+    // instead of accepting an endpoint that can only fail later during connect.
+    return scheme == "grpc";
 }
 
 bool ParsePort(const string& text, uint16_t& out) {
@@ -49,7 +51,7 @@ ConnectionConfig ParseEndpoint(const string& connection_name, const string& endp
     config.scheme = endpoint.substr(0, scheme_end);
 
     if (!IsSupportedScheme(config.scheme)) {
-        fail("不支持的 scheme '" + config.scheme + "'，当前支持 grpc / http");
+        fail("不支持的 scheme '" + config.scheme + "'，当前仅支持 grpc");
     }
 
     auto authority = endpoint.substr(scheme_end + 3);
@@ -79,14 +81,29 @@ ConnectionConfig ParseEndpoint(const string& connection_name, const string& endp
 }
 
 bool ConnectionRegistry::Upsert(ConnectionEntry entry) {
-    lock_guard<mutex> guard(lock_);
-    auto name = entry.config.name;
-    auto inserted = connections_.insert_or_assign(std::move(name), std::move(entry));
-    if (!inserted.second && inserted.first->second.provider) {
-        // 覆盖同名连接时关闭旧 Provider，避免连接泄漏
-        inserted.first->second.provider->Close();
+    std::shared_ptr<IRemoteScanProvider> previous_provider;
+    bool replaced = false;
+    {
+        lock_guard<mutex> guard(lock_);
+        auto name = entry.config.name;
+        auto existing = connections_.find(name);
+        if (existing == connections_.end()) {
+            connections_.emplace(std::move(name), std::move(entry));
+        } else {
+            // Move the old handle out before replacing the map value. Closing the
+            // iterator after insert_or_assign would close the newly installed provider.
+            previous_provider = std::move(existing->second.provider);
+            existing->second = std::move(entry);
+            replaced = true;
+        }
     }
-    return !inserted.second;
+    // Bound scans may still hold the old shared_ptr. Do not tear down their
+    // channel underneath an in-flight RPC; the provider destructor performs
+    // final cleanup after the last reference is released.
+    if (previous_provider && previous_provider.use_count() == 1) {
+        previous_provider->Close();
+    }
+    return replaced;
 }
 
 bool ConnectionRegistry::Remove(const string& name) {
@@ -97,10 +114,12 @@ bool ConnectionRegistry::Remove(const string& name) {
         if (entry == connections_.end()) {
             return false;
         }
-        provider = entry->second.provider;
+        provider = std::move(entry->second.provider);
         connections_.erase(entry);
     }
-    if (provider) {
+    // Existing bound scans retain their own provider reference. Let those scans
+    // finish (or be cancelled) before the provider's destructor releases the channel.
+    if (provider && provider.use_count() == 1) {
         provider->Close();
     }
     return true;

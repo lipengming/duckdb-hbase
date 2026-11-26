@@ -78,7 +78,9 @@ if(HBASE_BUILD_UNIT_TESTS)
       test/unit/test_cache_coverage.cpp
       test/unit/test_cache_manager.cpp
       test/unit/test_cache_metadata.cpp
-      test/unit/test_cache_storage.cpp)
+      test/unit/test_cache_storage.cpp
+      test/unit/test_connection_registry.cpp
+      test/unit/test_remote_scan_stream.cpp)
   target_include_directories(hbase_unit_tests PRIVATE
       src/include
       ${CMAKE_CURRENT_SOURCE_DIR}/../duckdb/third_party/catch)

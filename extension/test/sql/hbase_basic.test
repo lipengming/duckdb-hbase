@@ -28,6 +28,12 @@ SELECT hbase_connect('bad', 'ftp://127.0.0.1:21');
 ----
 scheme
 
+# HTTP scheme 当前没有 Provider 实现，必须在 endpoint 解析阶段拒绝
+statement error
+SELECT hbase_connect('bad-http', 'http://127.0.0.1:18080');
+----
+不支持的 scheme
+
 # 端点为 NULL：沿用 DuckDB 默认 NULL 传播语义，函数不被调用，结果为 NULL
 query I
 SELECT hbase_connect(NULL, 'grpc://127.0.0.1:18080') IS NULL;

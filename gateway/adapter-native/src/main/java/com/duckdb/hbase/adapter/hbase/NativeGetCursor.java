@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Table;
 
@@ -20,12 +22,19 @@ final class NativeGetCursor implements ScanCursor {
   private final String requestId;
   private final Table table;
   private final List<Result> results;
+  private final Consumer<ScanCursor> onClose;
+  private final AtomicBoolean closed = new AtomicBoolean();
   private int position;
-  private boolean closed;
 
   NativeGetCursor(String requestId, Table table, Result[] results) {
+    this(requestId, table, results, null);
+  }
+
+  NativeGetCursor(
+      String requestId, Table table, Result[] results, Consumer<ScanCursor> onClose) {
     this.requestId = requestId;
     this.table = table;
+    this.onClose = onClose;
     this.results = new ArrayList<>(results == null ? 0 : results.length);
     if (results != null) {
       Collections.addAll(this.results, results);
@@ -42,7 +51,7 @@ final class NativeGetCursor implements ScanCursor {
     if (maxRows <= 0) {
       throw new IllegalArgumentException("maxRows 必须为正数");
     }
-    if (closed) {
+    if (closed.get()) {
       return Collections.emptyList();
     }
     int end = Math.min(position + maxRows, results.size());
@@ -59,14 +68,17 @@ final class NativeGetCursor implements ScanCursor {
 
   @Override
   public void close() throws HBaseAccessException {
-    if (closed) {
+    if (!closed.compareAndSet(false, true)) {
       return;
     }
-    closed = true;
     try {
       table.close();
     } catch (IOException e) {
       throw new HBaseAccessException("关闭 Table 失败", e);
+    } finally {
+      if (onClose != null) {
+        onClose.accept(this);
+      }
     }
   }
 }
