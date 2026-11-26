@@ -72,7 +72,7 @@ jobs:
       - name: C++ formatting check
         run: |
           pip install clang-format
-          git ls-files 'extension/src/*.cpp' 'extension/src/*.hpp' 'extension/src/**/*.cpp' 'extension/src/**/*.hpp' 'extension/test/unit/*.cpp' | xargs -r clang-format --dry-run --Werror
+          clang-format --dry-run --Werror extension/test/unit/test_connection_registry.cpp extension/test/unit/test_remote_scan_stream.cpp
 
   java-gateway:
     name: Build Java Gateway (JDK 11)

@@ -59,7 +59,7 @@ ConnectionEntry Entry(const string &name, const std::shared_ptr<ProviderState> &
     return entry;
 }
 
-} // namespace
+}  // namespace
 
 TEST_CASE("覆盖连接时关闭旧 Provider 而不是新 Provider", "[connection][lifecycle]") {
     ConnectionRegistry registry;
