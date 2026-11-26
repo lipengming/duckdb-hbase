@@ -159,6 +159,14 @@ TEST_CASE("缓存列超集不能命中子集查询（HBase 行集合语义）", 
     REQUIRE(result.reason.find("columns") != string::npos);
 }
 
+TEST_CASE("重复请求列不能把不同列的缓存伪装成精确集合", "[cache][coverage]") {
+    vector<SegmentDescriptor> segments {
+        MakeSegment("mixed", "a", "z", Columns({"cf:name", "cf:age"}))};
+    auto duplicate_plan = MakePlan("a", "z", Columns({"cf:name", "cf:name"}));
+
+    REQUIRE(ComputeCacheLookup(segments, duplicate_plan, 1000).status == CacheStatus::MISS);
+}
+
 TEST_CASE("列类型不同不复用", "[cache][coverage]") {
     vector<SegmentDescriptor> segments {
         MakeSegment("s1", "a", "z", {Column("cf:age", "VARCHAR")})};

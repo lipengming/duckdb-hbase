@@ -116,6 +116,15 @@ CacheLookupResult ComputeCacheLookup(const vector<SegmentDescriptor> &segments, 
                 }
             }
         }
+        if (has_exact_columns) {
+            for (auto &column : segment.columns) {
+                auto found = std::find(plan.required_columns.begin(), plan.required_columns.end(), column);
+                if (found == plan.required_columns.end()) {
+                    has_exact_columns = false;
+                    break;
+                }
+            }
+        }
         if (!has_exact_columns) {
             skipped_columns++;
             continue;
