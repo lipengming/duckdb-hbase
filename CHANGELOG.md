@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 缓存覆盖判定要求列集合精确相等，避免 HBase Scan 的“至少一个请求 Cell 存在才返回该行”语义下，使用列超集缓存子集查询时泄漏额外 RowKey。
+- `RemoteScanStream::Close()` 对未完成的远端流触发一次 `Provider.Cancel()`，并唤醒有界队列等待者；正常完成的流不发送多余取消。
+- Scan Request ID 增加进程随机 nonce 与单调序号，避免同连接/同表并发查询覆盖 Gateway 活动游标。
+- Native Adapter 在仅指定 `timestamp_min` 时也应用时间戳下界；Scan 与 BatchGet 行为一致。
+- UTF8 固定 Schema 编码器显式拒绝整列族投影，避免将动态 qualifier 静默编码成 NULL。
+
 ### Added
 
 - **M3 缓存闭环**：`CacheManager` 门面 + 覆盖索引 + 段文件存储 + SQLite 元数据 + Full Hit 读取路径。

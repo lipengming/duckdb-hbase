@@ -72,6 +72,13 @@ public final class Utf8ColumnarEncoder {
    */
   public EncodedBatch encode(List<ColumnRef> columns, List<Row> rows, boolean expandVersions)
       throws IOException {
+    for (ColumnRef column : columns) {
+      if (column.getQualifier().isEmpty()) {
+        throw new IOException(
+            "Scanning an entire column family is not supported by the fixed-schema UTF8 encoder; "
+                + "request explicit family:qualifier columns");
+      }
+    }
     if (expandVersions) {
       return encodeExpanded(columns, rows);
     }

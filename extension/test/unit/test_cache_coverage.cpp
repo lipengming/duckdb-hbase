@@ -133,6 +133,19 @@ TEST_CASE("缺列 -> Miss", "[cache][coverage]") {
     REQUIRE(result.reason.find("columns") != string::npos);
 }
 
+TEST_CASE("缓存列超集不能命中子集查询（HBase 行集合语义）", "[cache][coverage]") {
+    // HBase 对多列 Scan 返回的是至少包含一个请求 Cell 的行。
+    // 先缓存 name+age，再只查 name，age-only 的行不能从缓存泄漏到结果中。
+    vector<SegmentDescriptor> segments {
+        MakeSegment("superset", "a", "z", Columns({"cf:name", "cf:age"}))};
+    auto subset_plan = MakePlan("a", "z", Columns({"cf:name"}));
+
+    auto result = ComputeCacheLookup(segments, subset_plan, 1000);
+    REQUIRE(result.status == CacheStatus::MISS);
+    REQUIRE(result.segments.empty());
+    REQUIRE(result.reason.find("columns") != string::npos);
+}
+
 TEST_CASE("列类型不同不复用", "[cache][coverage]") {
     vector<SegmentDescriptor> segments {
         MakeSegment("s1", "a", "z", {Column("cf:age", "VARCHAR")})};

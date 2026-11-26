@@ -101,8 +101,11 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
 
       scan.readVersions(Math.max(1, request.getMaxVersions()));
       // setTimeRange 会抛 IOException，必须放在 try 内
-      if (request.getMaxTimestamp() > 0) {
-        scan.setTimeRange(request.getMinTimestamp(), request.getMaxTimestamp());
+      if (request.getMinTimestamp() > 0 || request.getMaxTimestamp() > 0) {
+        long minTimestamp = Math.max(0L, request.getMinTimestamp());
+        long maxTimestamp =
+            request.getMaxTimestamp() > 0 ? request.getMaxTimestamp() : Long.MAX_VALUE;
+        scan.setTimeRange(minTimestamp, maxTimestamp);
       }
       if (request.getBatchSize() > 0) {
         scan.setCaching(request.getBatchSize());
@@ -129,8 +132,11 @@ public final class NativeHBaseAdapter implements HBaseAccessAdapter {
         Get get = new Get(rowKey.toByteArray());
         applyColumns(get, request.getColumnsList());
         // setTimeRange 会抛 IOException，必须放在 try 内
-        if (request.getMaxTimestamp() > 0) {
-          get.setTimeRange(request.getMinTimestamp(), request.getMaxTimestamp());
+        if (request.getMinTimestamp() > 0 || request.getMaxTimestamp() > 0) {
+          long minTimestamp = Math.max(0L, request.getMinTimestamp());
+          long maxTimestamp =
+              request.getMaxTimestamp() > 0 ? request.getMaxTimestamp() : Long.MAX_VALUE;
+          get.setTimeRange(minTimestamp, maxTimestamp);
         }
         gets.add(get);
       }
